@@ -8,25 +8,56 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -39,6 +70,45 @@ import kotlin.math.sqrt
 // Poses are drawn in a 380 x 250 space whose y range starts at -35 (floor is y = 200).
 
 data class Pt(val x: Float, val y: Float)
+
+/**
+ * 3D spatial coordinate for real-time camera orbit projections.
+ * Lifter root (pelvis) is centered at (x=190, y=104, z=0).
+ */
+data class Pt3(val x: Float, val y: Float, val z: Float) {
+    fun toPt(): Pt = Pt(x, y)
+}
+
+fun project3D(
+    p: Pt3,
+    azimuthDeg: Float,
+    elevationDeg: Float,
+    originX: Float = 190f,
+    originY: Float = 104f,
+    focalLength: Float = 450f
+): Pt {
+    val azRad = (azimuthDeg * PI / 180f).toFloat()
+    val elRad = (elevationDeg * PI / 180f).toFloat()
+
+    val dx = p.x - originX
+    val dy = p.y - originY
+    val dz = p.z
+
+    // Azimuth rotation around Y-axis
+    val x1 = dx * cos(azRad) + dz * sin(azRad)
+    val y1 = dy
+    val z1 = -dx * sin(azRad) + dz * cos(azRad)
+
+    // Elevation tilt around X-axis
+    val x2 = x1
+    val y2 = y1 * cos(elRad) - z1 * sin(elRad)
+    val z2 = y1 * sin(elRad) + z1 * cos(elRad)
+
+    val scale = focalLength / (focalLength + z2).coerceAtLeast(80f)
+    return Pt(originX + x2 * scale, originY + y2 * scale)
+}
+
+fun Pt.to3D(z: Float = 0f): Pt3 = Pt3(x, y, z)
 
 sealed class Item
 data class Ln(val a: Pt, val b: Pt, val hl: Boolean, val w: Float) : Item()
@@ -301,21 +371,78 @@ val ANIMS: Map<String, AnimSpec> = mapOf(
 fun AnimBox(id: String) {
     val spec = ANIMS[id] ?: return
     val ex = EX[id] ?: return
-    val reduce = remember { !ValueAnimator.areAnimatorsEnabled() }
-    val tr = rememberInfiniteTransition(label = "demo")
-    val p by tr.animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(5200, easing = LinearEasing), RepeatMode.Restart),
-        label = "phase",
-    )
+    val context = LocalContext.current
+    val feedback = remember { com.praveen.hypertrophy.feedback.FeedbackManager.getInstance(context) }
+
+    // Playback state
+    var isPlaying by remember { mutableStateOf(true) }
+    var speedMultiplier by remember { mutableFloatStateOf(1.0f) }
+    var normalizedPhase by remember { mutableFloatStateOf(0f) }
+
+    // Multi-angle & 3D Orbit Camera State
+    var selectedPreset by remember { mutableStateOf("Side") } // "Side", "Front", "Top", "Iso", "Dual"
+    var azimuth by remember { mutableFloatStateOf(90f) }
+    var elevation by remember { mutableFloatStateOf(0f) }
+    var zoomScale by remember { mutableFloatStateOf(1.0f) }
+    var isDualView by remember { mutableStateOf(false) }
+    var isXRay by remember { mutableStateOf(false) }
+
+    // Update preset camera angles
+    fun setCameraPreset(preset: String) {
+        selectedPreset = preset
+        feedback.playScrubTick()
+        when (preset) {
+            "Side" -> { azimuth = 90f; elevation = 0f; isDualView = false }
+            "Front" -> { azimuth = 0f; elevation = 0f; isDualView = false }
+            "Top" -> { azimuth = 0f; elevation = 70f; isDualView = false }
+            "Iso" -> { azimuth = 45f; elevation = 25f; isDualView = false }
+            "Dual" -> { isDualView = true }
+        }
+    }
+
+    // Animation clock coroutine
+    var lastTickPhase by remember { mutableIntStateOf(-1) }
+    LaunchedEffect(isPlaying, speedMultiplier) {
+        val baseDurationMs = 5200f
+        var lastTimeNanos = 0L
+        while (isPlaying) {
+            withFrameNanos { frameTimeNanos ->
+                if (lastTimeNanos != 0L) {
+                    val deltaSec = (frameTimeNanos - lastTimeNanos) / 1_000_000_000f
+                    val deltaPhase = (deltaSec * 1000f * speedMultiplier) / baseDurationMs
+                    val nextPhase = (normalizedPhase + deltaPhase) % 1.0f
+                    normalizedPhase = nextPhase
+
+                    // Check cadence inflection point (inflection at 0.0 top, spec.a + spec.h bottom)
+                    val currentPhaseSegment = when {
+                        nextPhase < spec.a -> 0
+                        nextPhase < spec.a + spec.h -> 1
+                        nextPhase < spec.a + spec.h + spec.c -> 2
+                        else -> 3
+                    }
+                    if (currentPhaseSegment != lastTickPhase && (currentPhaseSegment == 1 || currentPhaseSegment == 0)) {
+                        lastTickPhase = currentPhaseSegment
+                        feedback.playCadenceTick()
+                    }
+                }
+                lastTimeNanos = frameTimeNanos
+            }
+        }
+    }
+
+    val p = normalizedPhase
     val s: Float
     val i: Int
     if (p < spec.a) { s = p / spec.a; i = 0 }
     else if (p < spec.a + spec.h) { s = 1f; i = 1 }
     else if (p < spec.a + spec.h + spec.c) { s = 1f - (p - spec.a - spec.h) / spec.c; i = 2 }
     else { s = 0f; i = 3 }
-    val k = if (reduce) 1f else s * s * (3f - 2f * s)
-    val items = remember(id, (k * 150f).roundToInt()) { spec.pose(k) }
+    val k = s * s * (3f - 2f * s)
+
+    // Volumetric 3D mannequin and equipment primitives
+    val (lifterPrimitives, equipmentPrimitives) = remember(id, (k * 150f).roundToInt()) {
+        com.praveen.hypertrophy.render3d.Mannequin3D.solveExercisePose(id, k)
+    }
 
     val ink = MaterialTheme.colorScheme.onSurface
     val accent = MaterialTheme.colorScheme.primary
@@ -327,40 +454,303 @@ fun AnimBox(id: String) {
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(Modifier.padding(8.dp)) {
-            Canvas(
-                Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(380f / 250f)
-            ) {
-                val sc = size.width / 380f
-                fun o(p: Pt) = Offset(p.x * sc, (p.y + 35f) * sc)
-                drawLine(muted.copy(alpha = 0.5f), o(Pt(10f, 200f)), o(Pt(370f, 200f)), strokeWidth = 2f * sc)
-                for (it in spec.scene) {
-                    if (it is Sc) drawLine(muted, o(it.a), o(it.b), strokeWidth = 3f * sc, cap = StrokeCap.Round)
+        Column(Modifier.padding(12.dp)) {
+            // Viewport Section (Single 3D Orbit or Dual Synchronized View)
+            if (isDualView) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(210.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Viewport 1: Side Profile (90°)
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.Black.copy(alpha = 0.5f))
+                            .padding(4.dp)
+                    ) {
+                        ExerciseCanvas3D(
+                            lifterPrimitives = lifterPrimitives,
+                            equipmentPrimitives = equipmentPrimitives,
+                            azimuth = 90f,
+                            elevation = 0f,
+                            zoom = 1.0f,
+                            isXRay = isXRay,
+                            modifier = Modifier.fillMaxWidth().aspectRatio(1.2f)
+                        )
+                        Text(
+                            "SIDE 3D",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = accent,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(4.dp)
+                                .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+
+                    // Viewport 2: Front / 3D Orbit Profile
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.Black.copy(alpha = 0.5f))
+                            .pointerInput(Unit) {
+                                detectDragGestures { change, dragAmount ->
+                                    change.consume()
+                                    azimuth = (azimuth + dragAmount.x * 0.7f) % 360f
+                                    elevation = (elevation - dragAmount.y * 0.5f).coerceIn(-40f, 80f)
+                                }
+                            }
+                            .padding(4.dp)
+                    ) {
+                        ExerciseCanvas3D(
+                            lifterPrimitives = lifterPrimitives,
+                            equipmentPrimitives = equipmentPrimitives,
+                            azimuth = azimuth,
+                            elevation = elevation,
+                            zoom = zoomScale,
+                            isXRay = isXRay,
+                            modifier = Modifier.fillMaxWidth().aspectRatio(1.2f)
+                        )
+                        Text(
+                            "ORBIT 3D",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(4.dp)
+                                .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
                 }
-                for (it in items) {
-                    when (it) {
-                        is Ln -> drawLine(if (it.hl) accent else ink, o(it.a), o(it.b), strokeWidth = it.w * sc, cap = StrokeCap.Round)
-                        is Hd -> {
-                            drawCircle(surface, radius = 10f * sc, center = o(it.c))
-                            drawCircle(ink, radius = 10f * sc, center = o(it.c), style = Stroke(width = 2.5f * sc))
+            } else {
+                // Single 3D Orbit Canvas with touch drag rotation and pinch-to-zoom
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                azimuth = (azimuth + dragAmount.x * 0.7f) % 360f
+                                elevation = (elevation - dragAmount.y * 0.5f).coerceIn(-40f, 80f)
+                                selectedPreset = "Orbit"
+                            }
                         }
-                        is Dbl -> {
-                            val c = o(it.c)
-                            drawRoundRect(muted, topLeft = Offset(c.x - 9f * sc, c.y - 4f * sc), size = Size(18f * sc, 8f * sc), cornerRadius = CornerRadius(2f * sc))
+                ) {
+                    ExerciseCanvas3D(
+                        lifterPrimitives = lifterPrimitives,
+                        equipmentPrimitives = equipmentPrimitives,
+                        azimuth = azimuth,
+                        elevation = elevation,
+                        zoom = zoomScale,
+                        isXRay = isXRay,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(380f / 240f)
+                    )
+                    Text(
+                        "${selectedPreset.uppercase()} 3D (DRAG TO ROTATE)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = accent,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(8.dp)
+                            .background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // Camera Presets & X-Ray Toggle Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    listOf("Side", "Front", "Top", "Iso", "Dual").forEach { preset ->
+                        val isSel = (preset == "Dual" && isDualView) || (!isDualView && selectedPreset == preset)
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSel) accent else MaterialTheme.colorScheme.surfaceContainerHigh)
+                                .clickable { setCameraPreset(preset) }
+                                .padding(horizontal = 9.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = preset,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isSel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                        is Sc -> {}
+                    }
+                }
+
+                // X-Ray Equipment Ghosting Toggle
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isXRay) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .clickable {
+                            isXRay = !isXRay
+                            feedback.playScrubTick()
+                        }
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = if (isXRay) "⚡ X-RAY ON" else "X-RAY",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isXRay) MaterialTheme.colorScheme.onTertiary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // Playback Phase Caption
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (i == 3) "Reset" else spec.caps[i],
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = accent,
+                )
+                Text(
+                    text = "${(p * 100).toInt()}% • ${(speedMultiplier)}x",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // Precision Scrubber Timeline Slider
+            Slider(
+                value = normalizedPhase,
+                onValueChange = { newPhase ->
+                    isPlaying = false
+                    normalizedPhase = newPhase
+                    feedback.playScrubTick()
+                },
+                valueRange = 0f..1f,
+                colors = SliderDefaults.colors(
+                    thumbColor = accent,
+                    activeTrackColor = accent,
+                    inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                modifier = Modifier.fillMaxWidth().height(36.dp)
+            )
+
+            // Speed Chips & Play/Pause Controls Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Play / Pause Button
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(if (isPlaying) MaterialTheme.colorScheme.secondaryContainer else accent)
+                        .clickable {
+                            isPlaying = !isPlaying
+                            feedback.playScrubTick()
+                        }
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = if (isPlaying) "⏸ PAUSE" else "▶ PLAY",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isPlaying) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onPrimary
+                    )
+                }
+
+                // Speed Stepper Chips
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf(0.25f, 0.5f, 1.0f, 1.5f, 2.0f).forEach { spd ->
+                        val isSpeedSel = speedMultiplier == spd
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSpeedSel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh)
+                                .clickable {
+                                    speedMultiplier = spd
+                                    feedback.playScrubTick()
+                                }
+                                .padding(horizontal = 7.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = "${spd}x",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (isSpeedSel) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSpeedSel) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
-            Text(
-                text = if (i == 3) "Reset" else spec.caps[i],
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = accent,
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            )
+        }
+    }
+}
+
+@Composable
+fun ExerciseCanvas3D(
+    lifterPrimitives: List<com.praveen.hypertrophy.render3d.Primitive3D>,
+    equipmentPrimitives: List<com.praveen.hypertrophy.render3d.Primitive3D>,
+    azimuth: Float,
+    elevation: Float,
+    zoom: Float = 1.0f,
+    isXRay: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    val camera = remember(azimuth, elevation, zoom) {
+        com.praveen.hypertrophy.render3d.Camera3D(
+            azimuthDeg = azimuth,
+            elevationDeg = elevation,
+            zoom = zoom
+        )
+    }
+
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+
+        // Combine all primitives and depth sort using Painter's algorithm
+        val allPrimitives = ArrayList<com.praveen.hypertrophy.render3d.Primitive3D>(
+            equipmentPrimitives.size + lifterPrimitives.size
+        )
+        allPrimitives.addAll(equipmentPrimitives)
+        allPrimitives.addAll(lifterPrimitives)
+
+        // Project and depth sort: highest centerZ / distance drawn first
+        val azRad = (azimuth * Math.PI / 180.0).toFloat()
+        val elRad = (elevation * Math.PI / 180.0).toFloat()
+
+        allPrimitives.sortByDescending { prim ->
+            // Projected camera Z depth
+            val z = prim.centerZ
+            -z * sin(azRad) * cos(elRad)
+        }
+
+        for (prim in allPrimitives) {
+            prim.draw(this, camera, w, h, isXRay)
         }
     }
 }

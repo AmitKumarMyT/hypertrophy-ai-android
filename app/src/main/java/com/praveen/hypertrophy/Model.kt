@@ -63,7 +63,7 @@ data class Ex(
     val tipsDont: List<String>,
 )
 
-val EXERCISES: List<Ex> = listOf(
+val EXERCISES: MutableList<Ex> = mutableListOf(
     Ex("curl", "Dumbbell curl", listOf("biceps"), listOf("forearms"), 12, 20, 60, false, true, DB_L,
         "Elbows pinned to your ribs. Fully straighten at the bottom, no swinging.",
         listOf("Straighten fully at the bottom for the stretch", "Lower for 2 to 3 s and stop 1 to 2 reps short of failure"),
@@ -137,7 +137,8 @@ val EXERCISES: List<Ex> = listOf(
         listOf("Lead with your elbows and stop at shoulder height", "Lower for 2 to 3 s"),
         listOf("Swing the weights up", "Shrug your shoulders")),
 )
-val EX: Map<String, Ex> = EXERCISES.associateBy { it.id }
+val EX: Map<String, Ex>
+    get() = EXERCISES.associateBy { it.id }
 
 val GENERAL_RULES: List<String> = listOf(
     "Finish every working set 1 to 2 reps from failure.",
@@ -196,8 +197,19 @@ data class HypertrophyAdvice(
 @Serializable
 data class AISettings(
     val apiKey: String = "",
-    val model: String = "gemini-3.8-flash",
+    val model: String = "gemini-4-hydrogen",
+    val thinkingLevel: String = "high",
     val enabled: Boolean = true,
+)
+
+@Serializable
+data class OnboardingProfile(
+    val jointPainAreas: List<String> = emptyList(),
+    val priorityMuscles: List<String> = emptyList(),
+    val daysPerWeek: Int = 4,
+    val sessionBudgetMins: Int = 30,
+    val equipmentType: String = "Commercial Gym",
+    val customPriorityText: String = "",
 )
 
 @Serializable
@@ -211,4 +223,6 @@ data class AppState(
     val session: Session? = null,
     val aiSettings: AISettings = AISettings(),
     val lastAdvice: HypertrophyAdvice? = null,
+    val hasCompletedOnboarding: Boolean = false,
+    val onboardingProfile: OnboardingProfile? = null,
 )

@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("com.google.devtools.ksp")
 }
 
 android {
@@ -45,5 +46,10 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.room:room-runtime:2.7.0-alpha13")
+    implementation("androidx.room:room-ktx:2.7.0-alpha13")
+    ksp("androidx.room:room-compiler:2.7.0-alpha13")
+    implementation("androidx.glance:glance-appwidget:1.1.1")
+    implementation("androidx.glance:glance-material3:1.1.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

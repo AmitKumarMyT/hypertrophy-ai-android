@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -89,7 +91,21 @@ private fun ScreenContent(vm: TrackerVM, ui: Ui, maxWidthDp: androidx.compose.ui
 
 @Composable
 fun AppScreen(vm: TrackerVM) {
+    val state by vm.state.collectAsState()
     val ui by vm.ui.collectAsState()
+    val isGenerating by vm.isGeneratingExercise.collectAsState()
+
+    // First-run / Onboarding check
+    if (!state.hasCompletedOnboarding) {
+        com.praveen.hypertrophy.ui.OnboardingScreen(
+            isLoading = isGenerating,
+            onComplete = { profile ->
+                vm.submitOnboarding(profile)
+            }
+        )
+        return
+    }
+
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val isWide = maxWidth >= 600.dp
         if (isWide) {
@@ -164,23 +180,46 @@ fun TodayScreen(vm: TrackerVM) {
 
     val finished = ss.plan.isNotEmpty() && ss.idx >= ss.plan.size
     var showSettings by remember { mutableStateOf(false) }
+    var showCatalog by remember { mutableStateOf(false) }
+    val dbExercises by vm.dbExercises.collectAsState()
+    val isGenerating by vm.isGeneratingExercise.collectAsState()
 
     if (showSettings) {
         AISettingsDialog(
             settings = st.aiSettings,
             onDismiss = { showSettings = false },
-            onSave = { key, model, enabled ->
-                vm.updateAiSettings(key, model, enabled)
+            onResetOnboarding = { vm.resetOnboarding() },
+            onSave = { key, model, thinking, enabled ->
+                vm.updateAiSettings(key, model, thinking, enabled)
                 showSettings = false
             }
+        )
+    }
+
+    if (showCatalog) {
+        com.praveen.hypertrophy.ui.ExerciseCatalogSheet(
+            exercises = dbExercises,
+            onDismiss = { showCatalog = false },
+            onSelectExercise = { ex ->
+                showCatalog = false
+            },
+            onGenerateWithAI = { prompt, muscle ->
+                vm.createExerciseWithAI(prompt, muscle)
+            },
+            isGenerating = isGenerating
         )
     }
 
     Panel {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(SimpleDateFormat("EEEE, d MMM", Locale.getDefault()).format(Date()), style = MaterialTheme.typography.headlineSmall)
-            IconButton(onClick = { showSettings = true }) {
-                Icon(Icons.Filled.Settings, contentDescription = "AI Coach Settings")
+            Row {
+                TextButton(onClick = { showCatalog = true }) {
+                    Text("Exercises", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                }
+                IconButton(onClick = { showSettings = true }) {
+                    Icon(Icons.Filled.Settings, contentDescription = "AI Coach Settings")
+                }
             }
         }
         Muted("Priority order: arms, core, legs, lower back, then the rest.")
@@ -225,18 +264,31 @@ fun TodayScreen(vm: TrackerVM) {
     if (ss.start != 0L) SessionBar(vm, ss, ui)
 
     if (ss.start == 0L && ui.fb == null) {
+        val firstExId = ss.plan[0].ex
+
+        // Today's Pre-Workout Briefing & Equipment Checklist Card
+        com.praveen.hypertrophy.ui.PreWorkoutBriefingCard(
+            activeExerciseId = firstExId
+        )
+
         Panel {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("Today's plan", style = MaterialTheme.typography.titleLarge)
                 Text(planMinutes(ss).toString() + " min", style = MaterialTheme.typography.labelLarge)
             }
             val first = ss.plan[0].ex
-            Muted("First up: " + EX[first]!!.name)
+            Muted("First up: " + (EX[first]?.name ?: first))
             AnimBox(first)
             ExerciseTips(first)
             PlanRows(ss)
             Button(onClick = { vm.startSession() }, modifier = Modifier.fillMaxWidth()) { Text("Start first set") }
             OutlinedButton(onClick = { vm.rebuild(null) }, modifier = Modifier.fillMaxWidth()) { Text("Rebuild plan") }
+            OutlinedButton(
+                onClick = { vm.autoTuneNextSession() },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("⚡ AI Auto-Tune With Gemini 4 Hydrogen")
+            }
         }
     } else {
         if (ss.pausedAt != 0L) {
@@ -359,19 +411,15 @@ private fun RestPanel(vm: TrackerVM, ss: Session, ui: Ui) {
     val next = ss.plan.getOrNull(ss.idx)
     Panel {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Rest", style = MaterialTheme.typography.titleMedium)
-            if (next != null) Muted("Next: " + EX[next.ex]!!.name)
+            Text("Rest Period", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            if (next != null) Muted("Next: " + (EX[next.ex]?.name ?: next.ex))
         }
-        Text(fmt(left), fontSize = 56.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-        LinearProgressIndicator(
-            progress = { if (ui.restTotal <= 0) 0f else (1f - left / ui.restTotal.toFloat()).coerceIn(0f, 1f) },
-            modifier = Modifier.fillMaxWidth(),
+        com.praveen.hypertrophy.ui.RestTimerHalo(
+            remSec = left,
+            totSec = ui.restTotal,
+            onAdjust = { vm.adjustRest(it) },
+            onSkip = { vm.adjustRest(0) }
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilledTonalButton(onClick = { vm.adjustRest(15) }) { Text("+15 s") }
-            FilledTonalButton(onClick = { vm.adjustRest(-15) }) { Text("-15 s") }
-            OutlinedButton(onClick = { vm.adjustRest(0) }) { Text("Skip rest") }
-        }
         if (next != null) {
             AnimBox(next.ex)
             ExerciseTips(next.ex)
@@ -646,28 +694,33 @@ fun CoachAdvicePanel(advice: HypertrophyAdvice, onDismiss: () -> Unit) {
 fun AISettingsDialog(
     settings: AISettings,
     onDismiss: () -> Unit,
-    onSave: (apiKey: String, model: String, enabled: Boolean) -> Unit
+    onResetOnboarding: () -> Unit = {},
+    onSave: (apiKey: String, model: String, thinkingLevel: String, enabled: Boolean) -> Unit
 ) {
     var key by remember { mutableStateOf(settings.apiKey) }
     var selectedModel by remember { mutableStateOf(settings.model) }
+    var selectedThinking by remember { mutableStateOf(settings.thinkingLevel) }
     var enabled by remember { mutableStateOf(settings.enabled) }
 
     val models = listOf(
-        "gemini-3.8-flash" to "Gemini 3.8 Flash (High Reasoning)",
+        "gemini-4-hydrogen" to "Gemini 4 Hydrogen (Newest · Coding & High Reasoning)",
+        "gemini-3.8-flash" to "Gemini 3.8 Flash (Balanced SFR Reasoning)",
         "gemini-3.5-flash-lite" to "Gemini 3.5 Flash-Lite (Fastest Response)"
     )
+
+    val thinkingLevels = listOf("low", "medium", "high")
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Gemini AI Coach Settings") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Enable AI Hypertrophy Coach")
+                    Text("Enable AI Coach")
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
                 OutlinedTextField(
@@ -680,7 +733,7 @@ fun AISettingsDialog(
                     visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
                 )
                 Text(
-                    "Select Model:",
+                    "Model Engine:",
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -695,15 +748,40 @@ fun AISettingsDialog(
                         )
                         Text(
                             mLabel,
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(start = 8.dp)
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(start = 6.dp)
                         )
                     }
+                }
+                Text(
+                    "Thinking Level:",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    thinkingLevels.forEach { lvl ->
+                        FilterChip(
+                            selected = selectedThinking == lvl,
+                            onClick = { selectedThinking = lvl },
+                            label = { Text(lvl.replaceFirstChar { it.uppercase() }) }
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        onDismiss()
+                        onResetOnboarding()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("🔄 Re-run Intake Survey & Program", color = MaterialTheme.colorScheme.tertiary)
                 }
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(key, selectedModel, enabled) }) {
+            Button(onClick = { onSave(key, selectedModel, selectedThinking, enabled) }) {
                 Text("Save")
             }
         },

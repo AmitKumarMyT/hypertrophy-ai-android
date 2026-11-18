@@ -9,7 +9,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -45,11 +47,28 @@ data class Ui(
 )
 
 class TrackerVM(app: Application) : AndroidViewModel(app) {
+    private val db = com.praveen.hypertrophy.data.db.AppDatabase.getInstance(app)
+    private val exerciseDao = db.exerciseDao()
+    private val workoutDao = db.workoutDao()
+
+    val dbExercises: StateFlow<List<com.praveen.hypertrophy.data.db.ExerciseEntity>> =
+        exerciseDao.getAllActive()
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5000),
+                emptyList<com.praveen.hypertrophy.data.db.ExerciseEntity>()
+            )
+
     private val store = Store(app)
+    private val feedback = com.praveen.hypertrophy.feedback.FeedbackManager.getInstance(app)
     private val _state = MutableStateFlow(normalize(store.load()))
     val state: StateFlow<AppState> = _state
     private val _ui = MutableStateFlow(Ui())
     val ui: StateFlow<Ui> = _ui
+    private val _isGeneratingExercise = MutableStateFlow(false)
+    val isGeneratingExercise: StateFlow<Boolean> = _isGeneratingExercise
+
+    private var lastWarningSec = -1
 
     init {
         store.save(_state.value)
@@ -58,9 +77,19 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
             while (true) {
                 delay(250)
                 val u = _ui.value
-                if (u.restEnd != 0L && System.currentTimeMillis() >= u.restEnd) {
-                    alert()
-                    _ui.update { it.copy(restEnd = 0L) }
+                if (u.restEnd != 0L) {
+                    val remainingMs = u.restEnd - System.currentTimeMillis()
+                    val secondsLeft = (remainingMs / 1000).toInt()
+                    if (remainingMs <= 0L) {
+                        alert()
+                        _ui.update { it.copy(restEnd = 0L) }
+                        lastWarningSec = -1
+                    } else if (secondsLeft in 1..3 && secondsLeft != lastWarningSec) {
+                        lastWarningSec = secondsLeft
+                        feedback.playCountdownTick(secondsLeft)
+                    }
+                } else {
+                    lastWarningSec = -1
                 }
             }
         }
@@ -79,13 +108,7 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
     }
 
     private fun alert() {
-        try {
-            ToneGenerator(AudioManager.STREAM_ALARM, 80).startTone(ToneGenerator.TONE_PROP_BEEP, 300)
-        } catch (e: Exception) { /* no sound */ }
-        try {
-            val vm = getApplication<Application>().getSystemService(VibratorManager::class.java)
-            vm?.defaultVibrator?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 200, 100, 200), -1))
-        } catch (e: Exception) { /* no vibration */ }
+        feedback.playCompletionFanfare()
     }
 
     // ---------- draft ----------
@@ -379,8 +402,164 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
         commit(_state.value.copy(lastAdvice = null))
     }
 
-    fun updateAiSettings(apiKey: String, model: String, enabled: Boolean) {
-        commit(_state.value.copy(aiSettings = AISettings(apiKey = apiKey.trim(), model = model, enabled = enabled)))
+    fun updateAiSettings(apiKey: String, model: String, thinkingLevel: String = "high", enabled: Boolean) {
+        commit(_state.value.copy(aiSettings = AISettings(apiKey = apiKey.trim(), model = model, thinkingLevel = thinkingLevel, enabled = enabled)))
+    }
+
+    fun createExerciseWithAI(prompt: String, muscle: String) {
+        val st = _state.value
+        if (st.aiSettings.apiKey.isBlank()) return
+        viewModelScope.launch {
+            _isGeneratingExercise.value = true
+            val created = GeminiService.generateExercise(
+                apiKey = st.aiSettings.apiKey,
+                model = st.aiSettings.model,
+                thinkingLevel = st.aiSettings.thinkingLevel,
+                userPrompt = prompt,
+                targetMuscleKey = muscle
+            )
+            if (created != null) {
+                exerciseDao.insert(created)
+                // Register in memory map so immediate workout selection works
+                val ladder = try {
+                    GeminiService.jsonParser.decodeFromString<List<String>>(created.ladderJson)
+                } catch (e: Exception) { listOf("Step 1") }
+                val tipsDo = try {
+                    GeminiService.jsonParser.decodeFromString<List<String>>(created.tipsDoJson)
+                } catch (e: Exception) { listOf("Control eccentric") }
+                val tipsDont = try {
+                    GeminiService.jsonParser.decodeFromString<List<String>>(created.tipsDontJson)
+                } catch (e: Exception) { listOf("Avoid cheating") }
+
+                val exObj = Ex(
+                    id = created.id,
+                    name = created.name,
+                    primary = created.primaryMuscles.split(",").map { it.trim() },
+                    secondary = if (created.secondaryMuscles.isNotBlank()) created.secondaryMuscles.split(",").map { it.trim() } else emptyList(),
+                    lo = created.loReps,
+                    hi = created.hiReps,
+                    rest = created.restSec,
+                    isSec = created.isSec,
+                    loaded = created.loaded,
+                    ladder = ladder,
+                    cue = created.cue,
+                    tipsDo = tipsDo,
+                    tipsDont = tipsDont
+                )
+                // Add dynamically to exercise list
+                (EXERCISES as? MutableList)?.add(exObj)
+            }
+            _isGeneratingExercise.value = false
+        }
+    }
+
+    /**
+     * AI Auto-Tuning for Tomorrow's Session using historical sets, volume, and recovery.
+     */
+    fun autoTuneNextSession() {
+        val st = _state.value
+        val ai = st.aiSettings
+        if (ai.apiKey.isBlank() || !ai.enabled) return
+
+        viewModelScope.launch {
+            _isGeneratingExercise.value = true
+            val recentLogs = kotlinx.serialization.json.Json.encodeToString(
+                kotlinx.serialization.builtins.ListSerializer(SetLog.serializer()),
+                st.log.takeLast(15)
+            )
+            val tunedPlan = GeminiService.tuneNextDaySession(
+                apiKey = ai.apiKey,
+                model = ai.model,
+                thinkingLevel = ai.thinkingLevel,
+                recentLogsJson = recentLogs,
+                soreMuscles = st.sore.toList(),
+                targetBudgetMins = st.budget
+            )
+            if (tunedPlan != null && tunedPlan.isNotEmpty()) {
+                val ss = st.session
+                if (ss == null || ss.start == 0L) {
+                    val updatedSession = (ss ?: newSession(st, false)).copy(plan = tunedPlan, idx = 0)
+                    commit(st.copy(session = updatedSession))
+                    refreshDraft()
+                }
+            }
+            _isGeneratingExercise.value = false
+        }
+    }
+
+    /**
+     * AI Biomechanical Tuning for a specific exercise.
+     */
+    fun tuneSingleExercise(exerciseId: String, instruction: String) {
+        val st = _state.value
+        val ai = st.aiSettings
+        if (ai.apiKey.isBlank() || !ai.enabled) return
+
+        viewModelScope.launch {
+            _isGeneratingExercise.value = true
+            val current = exerciseDao.getById(exerciseId)
+            if (current != null) {
+                val tuned = GeminiService.tuneExercise(
+                    apiKey = ai.apiKey,
+                    model = ai.model,
+                    thinkingLevel = ai.thinkingLevel,
+                    currentExercise = current,
+                    userInstruction = instruction
+                )
+                if (tuned != null) {
+                    exerciseDao.insert(tuned)
+                }
+            }
+            _isGeneratingExercise.value = false
+        }
+    }
+
+    /**
+     * Submits the 6-step deep biomechanical survey and generates the dynamic 7-day program
+     * with Gemini 4 Hydrogen.
+     */
+    fun submitOnboarding(profile: OnboardingProfile) {
+        val st = _state.value
+        val ai = st.aiSettings
+
+        viewModelScope.launch {
+            _isGeneratingExercise.value = true
+            val generatedPlan = if (ai.apiKey.isNotBlank() && ai.enabled) {
+                GeminiService.generateWeekProgram(
+                    apiKey = ai.apiKey,
+                    model = ai.model,
+                    thinkingLevel = ai.thinkingLevel,
+                    profile = profile
+                )
+            } else null
+
+            val targetPlan = generatedPlan ?: st.session?.plan ?: listOf(
+                PlanItem("curl", 3, 0),
+                PlanItem("bench", 3, 0),
+                PlanItem("squat", 3, 0)
+            )
+
+            val newSess = Session(
+                day = dayKey(),
+                plan = targetPlan,
+                idx = 0
+            )
+
+            commit(
+                st.copy(
+                    hasCompletedOnboarding = true,
+                    onboardingProfile = profile,
+                    session = newSess,
+                    budget = profile.sessionBudgetMins
+                )
+            )
+            refreshDraft()
+            _isGeneratingExercise.value = false
+        }
+    }
+
+    fun resetOnboarding() {
+        commit(_state.value.copy(hasCompletedOnboarding = false))
     }
 
     fun restartSession() {
