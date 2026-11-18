@@ -221,6 +221,32 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
             )
         }
         refreshDraft()
+
+        // Asynchronous Gemini Hypertrophy Intelligence invocation
+        if (st.aiSettings.enabled && st.aiSettings.apiKey.isNotBlank() && !finished) {
+            viewModelScope.launch {
+                val targets = (e.primary + e.secondary).joinToString(", ") { MUSCLE[it]?.name ?: it }
+                val advice = GeminiService.getAdvice(
+                    apiKey = st.aiSettings.apiKey,
+                    model = st.aiSettings.model,
+                    exName = e.name,
+                    targetMuscles = targets,
+                    lastReps = reps,
+                    lastRir = dr.rir,
+                    lastKg = dr.kg.toDoubleOrNull() ?: 0.0,
+                    setsDone = cur.done,
+                    setsTotal = cur.sets,
+                )
+                if (advice != null) {
+                    commit(_state.value.copy(lastAdvice = advice))
+                    // If Gemini recommends adjusted rest time, tune the active rest timer
+                    if (advice.suggestedRestSeconds > 0 && _ui.value.restEnd > now()) {
+                        val newEnd = t + advice.suggestedRestSeconds * 1000L
+                        _ui.update { it.copy(restEnd = newEnd, restTotal = advice.suggestedRestSeconds) }
+                    }
+                }
+            }
+        }
     }
 
     fun undoLast() {
@@ -347,6 +373,14 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
         commit(st.copy(log = log, times = times, lvl = lvl, session = ss))
         _ui.update { it.copy(fb = null, draft = null, restEnd = 0L) }
         refreshDraft()
+    }
+
+    fun clearAdvice() {
+        commit(_state.value.copy(lastAdvice = null))
+    }
+
+    fun updateAiSettings(apiKey: String, model: String, enabled: Boolean) {
+        commit(_state.value.copy(aiSettings = AISettings(apiKey = apiKey.trim(), model = model, enabled = enabled)))
     }
 
     fun restartSession() {

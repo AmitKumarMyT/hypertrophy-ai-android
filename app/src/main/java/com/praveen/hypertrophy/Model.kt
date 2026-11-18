@@ -184,6 +184,23 @@ data class Session(
 )
 
 @Serializable
+data class HypertrophyAdvice(
+    val reasoning: String = "",
+    val action: String = "CONTINUE", // CONTINUE, DROP_LOAD, EXTRA_REST, PIVOT_EXERCISE
+    val suggestedWeightDeltaKg: Double = 0.0,
+    val suggestedRestSeconds: Int = 90,
+    val coachingCue: String = "",
+    val fatigueWarning: Boolean = false,
+)
+
+@Serializable
+data class AISettings(
+    val apiKey: String = "",
+    val model: String = "gemini-3.8-flash",
+    val enabled: Boolean = true,
+)
+
+@Serializable
 data class AppState(
     val log: List<SetLog> = emptyList(),
     val times: List<TimeLog> = emptyList(),
@@ -192,4 +209,6 @@ data class AppState(
     val budget: Int = 15,
     val restH: Int = 42,
     val session: Session? = null,
+    val aiSettings: AISettings = AISettings(),
+    val lastAdvice: HypertrophyAdvice? = null,
 )

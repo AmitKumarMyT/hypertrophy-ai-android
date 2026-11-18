@@ -20,6 +20,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -158,9 +163,26 @@ fun TodayScreen(vm: TrackerVM) {
     }
 
     val finished = ss.plan.isNotEmpty() && ss.idx >= ss.plan.size
+    var showSettings by remember { mutableStateOf(false) }
+
+    if (showSettings) {
+        AISettingsDialog(
+            settings = st.aiSettings,
+            onDismiss = { showSettings = false },
+            onSave = { key, model, enabled ->
+                vm.updateAiSettings(key, model, enabled)
+                showSettings = false
+            }
+        )
+    }
 
     Panel {
-        Text(SimpleDateFormat("EEEE, d MMM", Locale.getDefault()).format(Date()), style = MaterialTheme.typography.headlineSmall)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(SimpleDateFormat("EEEE, d MMM", Locale.getDefault()).format(Date()), style = MaterialTheme.typography.headlineSmall)
+            IconButton(onClick = { showSettings = true }) {
+                Icon(Icons.Filled.Settings, contentDescription = "AI Coach Settings")
+            }
+        }
         Muted("Priority order: arms, core, legs, lower back, then the rest.")
         Text("Time today", style = MaterialTheme.typography.labelLarge)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -220,6 +242,10 @@ fun TodayScreen(vm: TrackerVM) {
         if (ss.pausedAt != 0L) {
             PausedPanel(vm, ss)
         } else {
+            // Live Gemini Hypertrophy Coach Card
+            st.lastAdvice?.let { advice ->
+                CoachAdvicePanel(advice = advice, onDismiss = { vm.clearAdvice() })
+            }
             FeedbackPanel(vm, ui)
             if (ui.restEnd != 0L) RestPanel(vm, ss, ui) else ExercisePanel(vm, st, ss, ui)
         }
@@ -558,6 +584,135 @@ fun ProgressScreen(vm: TrackerVM) {
             Text(if (ui.confirm == "reset") "Tap again to erase everything" else "Reset all data")
         }
     }
+}
+
+// ---------------------------------------------------------------- Gemini AI Coach UI
+
+@Composable
+fun CoachAdvicePanel(advice: HypertrophyAdvice, onDismiss: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (advice.fatigueWarning) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer
+        ),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Coach Gemini Insight",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (advice.fatigueWarning) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onTertiaryContainer
+                )
+                TextButton(onClick = onDismiss) {
+                    Text("Dismiss", color = if (advice.fatigueWarning) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onTertiaryContainer)
+                }
+            }
+            Text(
+                text = advice.reasoning,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (advice.fatigueWarning) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onTertiaryContainer
+            )
+            Surface(
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
+            ) {
+                Column(Modifier.padding(10.dp)) {
+                    Text(
+                        text = "Next: ${advice.action.replace('_', ' ')}" +
+                                (if (advice.suggestedWeightDeltaKg != 0.0) " (${if (advice.suggestedWeightDeltaKg > 0) "+" else ""}${advice.suggestedWeightDeltaKg} kg)" else "") +
+                                " · Rest: ${advice.suggestedRestSeconds}s",
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    if (advice.coachingCue.isNotBlank()) {
+                        Text(
+                            text = "Cue: ${advice.coachingCue}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AISettingsDialog(
+    settings: AISettings,
+    onDismiss: () -> Unit,
+    onSave: (apiKey: String, model: String, enabled: Boolean) -> Unit
+) {
+    var key by remember { mutableStateOf(settings.apiKey) }
+    var selectedModel by remember { mutableStateOf(settings.model) }
+    var enabled by remember { mutableStateOf(settings.enabled) }
+
+    val models = listOf(
+        "gemini-3.8-flash" to "Gemini 3.8 Flash (High Reasoning)",
+        "gemini-3.5-flash-lite" to "Gemini 3.5 Flash-Lite (Fastest Response)"
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Gemini AI Coach Settings") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Enable AI Hypertrophy Coach")
+                    Switch(checked = enabled, onCheckedChange = { enabled = it })
+                }
+                OutlinedTextField(
+                    value = key,
+                    onValueChange = { key = it },
+                    label = { Text("Gemini API Key") },
+                    placeholder = { Text("AIzaSy...") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+                )
+                Text(
+                    "Select Model:",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                models.forEach { (mId, mLabel) ->
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedModel == mId,
+                            onClick = { selectedModel = mId }
+                        )
+                        Text(
+                            mLabel,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(start = 8.dp)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(key, selectedModel, enabled) }) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 private fun readyText(st: AppState, m: String): String {
