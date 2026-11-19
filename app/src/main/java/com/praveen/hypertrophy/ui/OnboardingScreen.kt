@@ -51,10 +51,14 @@ import com.praveen.hypertrophy.OnboardingProfile
 @Composable
 fun OnboardingScreen(
     isLoading: Boolean,
-    onComplete: (OnboardingProfile) -> Unit
+    initialApiKey: String = "",
+    onComplete: (OnboardingProfile, String) -> Unit
 ) {
     var step by remember { mutableIntStateOf(0) }
     val totalSteps = 7
+
+    // API Key State
+    var apiKeyText by remember { mutableStateOf(initialApiKey) }
 
     // Biometrics State
     var selectedGender by remember { mutableStateOf("Male") }
@@ -639,21 +643,57 @@ fun OnboardingScreen(
                         }
                     }
 
-                    // Step 6: Custom Priority Prompt
+                    // Step 6: Custom Priority Prompt & Gemini API Key
                     6 -> {
                         Text(
-                            text = "Custom Priority Request",
+                            text = "AI Engine & Custom Priority",
                             style = MaterialTheme.typography.titleMedium,
                             color = Color.White,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Enter any specific priorities or instructions for Gemini 4 Hydrogen (only asked once).",
+                            text = "Provide your Gemini API Key so Gemini 4 Hydrogen can synthesize truly dynamic exercises, equipment kinematics, and next-day tuning.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color(0xFF8E95A5),
-                            modifier = Modifier.padding(vertical = 8.dp)
+                            modifier = Modifier.padding(vertical = 4.dp)
                         )
-                        Spacer(Modifier.height(10.dp))
+
+                        Spacer(Modifier.height(8.dp))
+
+                        Text(
+                            text = "Gemini API Key (Gemini 4 Hydrogen)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color(0xFFE2F952),
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = apiKeyText,
+                            onValueChange = { apiKeyText = it },
+                            placeholder = { Text("AIzaSy...", color = Color(0xFF6A7080)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color(0xFF16171B),
+                                unfocusedContainerColor = Color(0xFF141519),
+                                focusedBorderColor = Color(0xFFE2F952),
+                                unfocusedBorderColor = Color(0xFF22252C),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+
+                        Spacer(Modifier.height(14.dp))
+
+                        Text(
+                            text = "Custom Training Priorities / Bio-Constraints",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(4.dp))
 
                         OutlinedTextField(
                             value = customPriorityText,
@@ -667,7 +707,7 @@ fun OnboardingScreen(
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(140.dp),
+                                .height(120.dp),
                             shape = RoundedCornerShape(14.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedContainerColor = Color(0xFF16171B),
@@ -759,7 +799,8 @@ fun OnboardingScreen(
                                                 sessionBudgetMins = sessionBudgetMins,
                                                 equipmentType = equipmentType,
                                                 customPriorityText = customPriorityText
-                                            )
+                                            ),
+                                            apiKeyText.trim()
                                         )
                                     }
                                 },

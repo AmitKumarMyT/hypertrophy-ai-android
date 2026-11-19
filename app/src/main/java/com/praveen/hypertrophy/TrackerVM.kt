@@ -44,6 +44,7 @@ data class Ui(
     val restEnd: Long = 0L,
     val restTotal: Int = 0,
     val confirm: String = "",
+    val nextDayTuningNotice: String = "",
 )
 
 class TrackerVM(app: Application) : AndroidViewModel(app) {
@@ -72,6 +73,14 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
 
     init {
         store.save(_state.value)
+        // Preload any custom Room exercises into in-memory EXERCISES list so EX[id] lookup succeeds
+        viewModelScope.launch {
+            dbExercises.collect { list ->
+                for (entity in list) {
+                    registerEntityInExerciseMap(entity)
+                }
+            }
+        }
         refreshDraft()
         viewModelScope.launch {
             while (true) {
@@ -114,7 +123,7 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
     // ---------- draft ----------
 
     private fun makeDraft(st: AppState, it: PlanItem): Draft {
-        val e = EX[it.ex]!!
+        val e = EX[it.ex] ?: getExerciseOrDefault(it.ex)
         val l = lastSessionSets(st, it.ex)
         val reps = if (l.isNotEmpty()) minOf(e.hi, l.maxOf { x -> x.reps } + (if (it.done == 0) 1 else 0)) else e.lo + 2
         val kg = if (l.isNotEmpty() && l.last().kg > 0) l.last().kg.toString().removeSuffix(".0") else ""
@@ -199,7 +208,7 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
         val ss0 = st.session ?: return
         val item = ss0.plan.getOrNull(ss0.idx) ?: return
         val dr = _ui.value.draft ?: return
-        val e = EX[item.ex]!!
+        val e = EX[item.ex] ?: getExerciseOrDefault(item.ex)
         var reps = dr.reps
         if (dr.holdStart != 0L) reps = ((now() - dr.holdStart) / 1000).toInt()
         if (reps <= 0) { setDraft(dr.copy(err = "Enter the reps you completed.")); return }
@@ -246,26 +255,49 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
         refreshDraft()
 
         // Asynchronous Gemini Hypertrophy Intelligence invocation
-        if (st.aiSettings.enabled && st.aiSettings.apiKey.isNotBlank() && !finished) {
-            viewModelScope.launch {
-                val targets = (e.primary + e.secondary).joinToString(", ") { MUSCLE[it]?.name ?: it }
-                val advice = GeminiService.getAdvice(
-                    apiKey = st.aiSettings.apiKey,
-                    model = st.aiSettings.model,
-                    exName = e.name,
-                    targetMuscles = targets,
-                    lastReps = reps,
-                    lastRir = dr.rir,
-                    lastKg = dr.kg.toDoubleOrNull() ?: 0.0,
-                    setsDone = cur.done,
-                    setsTotal = cur.sets,
-                )
-                if (advice != null) {
-                    commit(_state.value.copy(lastAdvice = advice))
-                    // If Gemini recommends adjusted rest time, tune the active rest timer
-                    if (advice.suggestedRestSeconds > 0 && _ui.value.restEnd > now()) {
-                        val newEnd = t + advice.suggestedRestSeconds * 1000L
-                        _ui.update { it.copy(restEnd = newEnd, restTotal = advice.suggestedRestSeconds) }
+        if (st.aiSettings.enabled && st.aiSettings.apiKey.isNotBlank()) {
+            val targets = (e.primary + e.secondary).joinToString(", ") { MUSCLE[it]?.name ?: it }
+
+            // Intra-workout set advice
+            if (!finished) {
+                viewModelScope.launch {
+                    val advice = GeminiService.getAdvice(
+                        apiKey = st.aiSettings.apiKey,
+                        model = st.aiSettings.model,
+                        exName = e.name,
+                        targetMuscles = targets,
+                        lastReps = reps,
+                        lastRir = dr.rir,
+                        lastKg = dr.kg.toDoubleOrNull() ?: 0.0,
+                        setsDone = cur.done,
+                        setsTotal = cur.sets,
+                    )
+                    if (advice != null) {
+                        commit(_state.value.copy(lastAdvice = advice))
+                        // If Gemini recommends adjusted rest time, tune the active rest timer
+                        if (advice.suggestedRestSeconds > 0 && _ui.value.restEnd > now()) {
+                            val newEnd = t + advice.suggestedRestSeconds * 1000L
+                            _ui.update { it.copy(restEnd = newEnd, restTotal = advice.suggestedRestSeconds) }
+                        }
+                    }
+                }
+            }
+
+            // Post-exercise dynamic auto-tuning for next day workout:
+            if (exDone) {
+                viewModelScope.launch {
+                    val perfSummary = "${cur.sets} sets completed. Final set: $reps reps @ ${dr.rir} RIR with ${if (dr.kg.isNotBlank()) "${dr.kg}kg" else "bodyweight"}."
+                    val tuneRes = GeminiService.tuneNextSessionAfterCompletedExercise(
+                        apiKey = st.aiSettings.apiKey,
+                        model = st.aiSettings.model,
+                        thinkingLevel = st.aiSettings.thinkingLevel,
+                        completedExName = e.name,
+                        completedExTarget = targets,
+                        performanceSummary = perfSummary,
+                        currentTomorrowPlan = ns.session?.plan ?: emptyList()
+                    )
+                    if (tuneRes != null) {
+                        _ui.update { it.copy(nextDayTuningNotice = "⚡ Auto-tuned next day: ${tuneRes.explanation}") }
                     }
                 }
             }
@@ -326,7 +358,7 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
         val st = _state.value
         val ss = st.session ?: return
         val item = ss.plan.getOrNull(ss.idx) ?: return
-        val e = EX[item.ex]!!
+        val e = EX[item.ex] ?: getExerciseOrDefault(item.ex)
         val l = st.lvl[item.ex] ?: 0
         commit(st.copy(lvl = st.lvl + (item.ex to max(0, minOf(e.ladder.size - 1, l + d)))))
     }
@@ -406,6 +438,36 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
         commit(_state.value.copy(aiSettings = AISettings(apiKey = apiKey.trim(), model = model, thinkingLevel = thinkingLevel, enabled = enabled)))
     }
 
+    private fun registerEntityInExerciseMap(created: com.praveen.hypertrophy.data.db.ExerciseEntity) {
+        if (EXERCISES.any { it.id == created.id }) return
+        val ladder = try {
+            GeminiService.jsonParser.decodeFromString<List<String>>(created.ladderJson)
+        } catch (e: Exception) { listOf("Standard Tempo", "3s Lowering", "3s Lowering + Pause") }
+        val tipsDo = try {
+            GeminiService.jsonParser.decodeFromString<List<String>>(created.tipsDoJson)
+        } catch (e: Exception) { listOf("Control eccentric") }
+        val tipsDont = try {
+            GeminiService.jsonParser.decodeFromString<List<String>>(created.tipsDontJson)
+        } catch (e: Exception) { listOf("Avoid cheating") }
+
+        val exObj = Ex(
+            id = created.id,
+            name = created.name,
+            primary = created.primaryMuscles.split(",").map { it.trim() },
+            secondary = if (created.secondaryMuscles.isNotBlank()) created.secondaryMuscles.split(",").map { it.trim() } else emptyList(),
+            lo = created.loReps,
+            hi = created.hiReps,
+            rest = created.restSec,
+            isSec = created.isSec,
+            loaded = created.loaded,
+            ladder = ladder,
+            cue = created.cue,
+            tipsDo = tipsDo,
+            tipsDont = tipsDont
+        )
+        EXERCISES.add(exObj)
+    }
+
     fun createExerciseWithAI(prompt: String, muscle: String) {
         val st = _state.value
         if (st.aiSettings.apiKey.isBlank()) return
@@ -420,34 +482,7 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
             )
             if (created != null) {
                 exerciseDao.insert(created)
-                // Register in memory map so immediate workout selection works
-                val ladder = try {
-                    GeminiService.jsonParser.decodeFromString<List<String>>(created.ladderJson)
-                } catch (e: Exception) { listOf("Step 1") }
-                val tipsDo = try {
-                    GeminiService.jsonParser.decodeFromString<List<String>>(created.tipsDoJson)
-                } catch (e: Exception) { listOf("Control eccentric") }
-                val tipsDont = try {
-                    GeminiService.jsonParser.decodeFromString<List<String>>(created.tipsDontJson)
-                } catch (e: Exception) { listOf("Avoid cheating") }
-
-                val exObj = Ex(
-                    id = created.id,
-                    name = created.name,
-                    primary = created.primaryMuscles.split(",").map { it.trim() },
-                    secondary = if (created.secondaryMuscles.isNotBlank()) created.secondaryMuscles.split(",").map { it.trim() } else emptyList(),
-                    lo = created.loReps,
-                    hi = created.hiReps,
-                    rest = created.restSec,
-                    isSec = created.isSec,
-                    loaded = created.loaded,
-                    ladder = ladder,
-                    cue = created.cue,
-                    tipsDo = tipsDo,
-                    tipsDont = tipsDont
-                )
-                // Add dynamically to exercise list
-                (EXERCISES as? MutableList)?.add(exObj)
+                registerEntityInExerciseMap(created)
             }
             _isGeneratingExercise.value = false
         }
@@ -515,25 +550,35 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Submits the 6-step deep biomechanical survey and generates the dynamic 7-day program
+     * Submits the deep biomechanical survey and generates dynamic personalized exercises
      * with Gemini 4 Hydrogen.
      */
-    fun submitOnboarding(profile: OnboardingProfile) {
+    fun submitOnboarding(profile: OnboardingProfile, apiKey: String = "") {
         val st = _state.value
-        val ai = st.aiSettings
+        val effectiveApiKey = if (apiKey.isNotBlank()) apiKey else st.aiSettings.apiKey
+        val ai = st.aiSettings.copy(apiKey = effectiveApiKey, enabled = effectiveApiKey.isNotBlank())
 
         viewModelScope.launch {
             _isGeneratingExercise.value = true
-            val generatedPlan = if (ai.apiKey.isNotBlank() && ai.enabled) {
-                GeminiService.generateWeekProgram(
-                    apiKey = ai.apiKey,
+            var dynamicPlan: List<PlanItem>? = null
+
+            if (effectiveApiKey.isNotBlank()) {
+                val result = GeminiService.generateDynamicProgramWithExercises(
+                    apiKey = effectiveApiKey,
                     model = ai.model,
                     thinkingLevel = ai.thinkingLevel,
                     profile = profile
                 )
-            } else null
+                if (result != null && result.exercises.isNotEmpty()) {
+                    exerciseDao.insertAll(result.exercises)
+                    for (entity in result.exercises) {
+                        registerEntityInExerciseMap(entity)
+                    }
+                    dynamicPlan = result.planItems
+                }
+            }
 
-            val targetPlan = generatedPlan ?: st.session?.plan ?: listOf(
+            val targetPlan = dynamicPlan ?: listOf(
                 PlanItem("curl", 3, 0),
                 PlanItem("bench", 3, 0),
                 PlanItem("squat", 3, 0)
@@ -547,6 +592,7 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
 
             commit(
                 st.copy(
+                    aiSettings = ai,
                     hasCompletedOnboarding = true,
                     onboardingProfile = profile,
                     session = newSess,

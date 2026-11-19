@@ -136,9 +136,40 @@ val EXERCISES: MutableList<Ex> = mutableListOf(
         "Lead with the elbows, stop at shoulder height.",
         listOf("Lead with your elbows and stop at shoulder height", "Lower for 2 to 3 s"),
         listOf("Swing the weights up", "Shrug your shoulders")),
+    Ex("bench", "Dumbbell flat bench press", listOf("chest"), listOf("triceps", "shoulders"), 8, 15, 90, false, true, DB_L,
+        "Retract shoulder blades, lower dumbbells with control, press up.",
+        listOf("Keep wrists stacked over elbows", "Lower dumbbells until chest stretch"),
+        listOf("Flaring elbows 90 degrees", "Bouncing at bottom")),
+    Ex("squat", "Goblet squat", listOf("quads"), listOf("hamglutes"), 10, 16, 90, false, true, LEG_L,
+        "Hold weight at chest, sit down between hips with tall torso.",
+        listOf("Keep chest up, knees tracking over toes", "Drive through whole foot"),
+        listOf("Rounding lower back", "Knees caving inward")),
 )
+
+private val FALLBACK_DEFAULT_EX = Ex(
+    id = "unknown",
+    name = "Custom Dynamic Exercise",
+    primary = listOf("biceps"),
+    secondary = emptyList(),
+    lo = 8,
+    hi = 15,
+    rest = 60,
+    isSec = false,
+    loaded = true,
+    ladder = listOf("Standard Tempo", "3s Lowering", "3s Lowering + Pause"),
+    cue = "Control the eccentric lowering and maintain strict tension.",
+    tipsDo = listOf("Control tempo", "Focus on mind-muscle stretch"),
+    tipsDont = listOf("Avoid cheating with momentum", "Don't rush the eccentric")
+)
+
+fun getExerciseOrDefault(id: String): Ex {
+    return EXERCISES.firstOrNull { it.id == id } ?: FALLBACK_DEFAULT_EX.copy(id = id, name = id.replace('_', ' ').replaceFirstChar { it.uppercase() })
+}
+
 val EX: Map<String, Ex>
-    get() = EXERCISES.associateBy { it.id }
+    get() = EXERCISES.associateBy { it.id }.withDefault { id ->
+        getExerciseOrDefault(id)
+    }
 
 val GENERAL_RULES: List<String> = listOf(
     "Finish every working set 1 to 2 reps from failure.",

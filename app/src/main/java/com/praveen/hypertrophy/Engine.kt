@@ -148,7 +148,8 @@ fun lastSessionSets(s: AppState, id: String): List<SetLog> {
 fun targetReps(s: AppState, id: String): Int? {
     val l = lastSessionSets(s, id)
     if (l.isEmpty()) return null
-    return minOf(EX[id]!!.hi, l.maxOf { it.reps } + 1)
+    val hi = (EX[id] ?: getExerciseOrDefault(id)).hi
+    return minOf(hi, l.maxOf { it.reps } + 1)
 }
 
 // ---------- feedback ----------
@@ -171,7 +172,7 @@ fun setFeedback(e: Ex, x: SetLog): SetFeedback {
 }
 
 fun evaluateExercise(log: List<SetLog>, lvl: Map<String, Int>, id: String, today: String): Pair<String, Map<String, Int>> {
-    val e = EX[id]!!
+    val e = EX[id] ?: getExerciseOrDefault(id)
     val xs = log.filter { it.ex == id && !it.seed && dayKey(it.t) == today }
     if (xs.isEmpty()) return Pair("", lvl)
     val l = lvl[id] ?: 0

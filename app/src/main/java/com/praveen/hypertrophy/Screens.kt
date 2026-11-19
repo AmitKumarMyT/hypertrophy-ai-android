@@ -99,8 +99,9 @@ fun AppScreen(vm: TrackerVM) {
     if (!state.hasCompletedOnboarding) {
         com.praveen.hypertrophy.ui.OnboardingScreen(
             isLoading = isGenerating,
-            onComplete = { profile ->
-                vm.submitOnboarding(profile)
+            initialApiKey = state.aiSettings.apiKey,
+            onComplete = { profile, key ->
+                vm.submitOnboarding(profile, key)
             }
         )
         return
@@ -247,6 +248,27 @@ fun TodayScreen(vm: TrackerVM) {
         }
     }
 
+    if (ui.nextDayTuningNotice.isNotBlank()) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = ui.nextDayTuningNotice,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+
     if (ss.plan.isEmpty()) {
         Panel {
             Text("Nothing is ready", style = MaterialTheme.typography.titleLarge)
@@ -314,7 +336,7 @@ private fun PlanRows(ss: Session) {
     val now by rememberNow()
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         ss.plan.forEachIndexed { i, it ->
-            val e = EX[it.ex]!!
+            val e = EX[it.ex] ?: getExerciseOrDefault(it.ex)
             val current = i == ss.idx && ss.start != 0L
             Surface(
                 shape = MaterialTheme.shapes.medium,
@@ -329,7 +351,7 @@ private fun PlanRows(ss: Session) {
                         Text(e.name, fontWeight = FontWeight.SemiBold)
                         Muted(
                             it.sets.toString() + " sets of " + e.lo + " to " + e.hi + (if (e.isSec) " s" else "") + " · " +
-                                e.primary.joinToString(", ") { m -> MUSCLE[m]!!.name },
+                                e.primary.joinToString(", ") { m -> MUSCLE[m]?.name ?: m },
                         )
                     }
                     Text(
@@ -432,8 +454,8 @@ private fun RestPanel(vm: TrackerVM, ss: Session, ui: Ui) {
 private fun ExercisePanel(vm: TrackerVM, st: AppState, ss: Session, ui: Ui) {
     val item = ss.plan.getOrNull(ss.idx) ?: return
     val dr = ui.draft ?: return
-    val e = EX[item.ex]!!
-    val lv = st.lvl[item.ex] ?: 0
+    val e = EX[item.ex] ?: getExerciseOrDefault(item.ex)
+    val lv = (st.lvl[item.ex] ?: 0).coerceIn(0, maxOf(0, e.ladder.size - 1))
     val tg = targetReps(st, item.ex)
     val now by rememberNow()
 
@@ -545,7 +567,7 @@ private fun FinishPanel(vm: TrackerVM, st: AppState, ss: Session, ui: Ui) {
         Muted("Time per exercise, including rest between sets")
         ss.plan.forEach {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(EX[it.ex]!!.name)
+                Text(EX[it.ex]?.name ?: getExerciseOrDefault(it.ex).name)
                 Text(fmt(ss.exSec(it.ex, System.currentTimeMillis())), fontWeight = FontWeight.SemiBold)
             }
         }
@@ -601,19 +623,20 @@ fun ProgressScreen(vm: TrackerVM) {
             Muted("Log your first set and each exercise shows up here with its next target.")
         } else {
             ids.forEach { id ->
-                val e = EX[id]!!
+                val e = EX[id] ?: getExerciseOrDefault(id)
                 val l = lastSessionSets(st, id)
-                val best = l.maxByOrNull { it.reps }!!
-                val avg = l.sumOf { it.rir }.toDouble() / l.size
+                val best = l.maxByOrNull { it.reps }
+                val avg = if (l.isNotEmpty()) l.sumOf { it.rir }.toDouble() / l.size else 0.0
                 val lt = st.times.lastOrNull { it.ex == id }
+                val lv = (st.lvl[id] ?: 0).coerceIn(0, maxOf(0, e.ladder.size - 1))
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(e.name, fontWeight = FontWeight.SemiBold)
                     Muted(
                         "Last: " + l.joinToString(", ") { it.reps.toString() } + (if (e.isSec) " s" else " reps") +
-                            (if (best.kg > 0) " at " + best.kg.toString().removeSuffix(".0") + " kg" else "") +
+                            (if (best != null && best.kg > 0) " at " + best.kg.toString().removeSuffix(".0") + " kg" else "") +
                             " · avg RIR " + String.format("%.1f", avg) + (if (lt != null) " · " + fmt(lt.sec) else ""),
                     )
-                    Muted("Next: " + e.ladder[st.lvl[id] ?: 0] + " · aim " + (targetReps(st, id) ?: e.lo) + "+")
+                    Muted("Next: " + (e.ladder.getOrNull(lv) ?: "Standard") + " · aim " + (targetReps(st, id) ?: e.lo) + "+")
                 }
             }
         }

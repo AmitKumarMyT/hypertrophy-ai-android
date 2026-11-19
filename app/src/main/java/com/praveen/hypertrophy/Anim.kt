@@ -368,9 +368,12 @@ val ANIMS: Map<String, AnimSpec> = mapOf(
 )
 
 @Composable
-fun AnimBox(id: String) {
-    val spec = ANIMS[id] ?: return
-    val ex = EX[id] ?: return
+fun AnimBox(id: String, customName: String = "", customCue: String = "") {
+    val spec = ANIMS[id] ?: AnimSpec(
+        pCurl, emptyList(), .35f, .15f, .4f, listOf("Controlled eccentric", "Squeeze in peak tension", "Lower slowly")
+    )
+    val ex = EX[id]
+    val displayName = if (customName.isNotBlank()) customName else ex?.name ?: id
     val context = LocalContext.current
     val feedback = remember { com.praveen.hypertrophy.feedback.FeedbackManager.getInstance(context) }
 

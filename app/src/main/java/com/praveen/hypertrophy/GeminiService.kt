@@ -18,10 +18,20 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
+data class DynamicProgramResult(
+    val exercises: List<ExerciseEntity>,
+    val planItems: List<PlanItem>
+)
+
+data class AutoTuneResult(
+    val updatedPlan: List<PlanItem>,
+    val explanation: String
+)
+
 object GeminiService {
     private val client = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS)
+        .connectTimeout(25, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
     val jsonParser = Json { ignoreUnknownKeys = true }
@@ -114,41 +124,204 @@ object GeminiService {
             if (parts.isEmpty()) return@withContext null
 
             val text = ((parts[0] as? kotlinx.serialization.json.JsonObject)?.get("text") as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@withContext null
-
-            return@withContext jsonParser.decodeFromString<HypertrophyAdvice>(text)
+            jsonParser.decodeFromString<HypertrophyAdvice>(text)
         } catch (e: Exception) {
             e.printStackTrace()
             null
         }
     }
 
-    suspend fun generateExercise(
+    /**
+     * Synthesizes 3 to 5 completely personalized, non-static exercises tailored to user's
+     * equipment, biometrics, gender, and goal using Gemini 4 Hydrogen.
+     */
+    suspend fun generateDynamicProgramWithExercises(
         apiKey: String,
         model: String,
         thinkingLevel: String = "high",
-        userPrompt: String,
-        targetMuscleKey: String
-    ): ExerciseEntity? = withContext(Dispatchers.IO) {
+        profile: OnboardingProfile
+    ): DynamicProgramResult? = withContext(Dispatchers.IO) {
         if (apiKey.isBlank()) return@withContext null
 
         val prompt = """
-            Create a complete, evidence-based exercise for hypertrophy based on user request: "$userPrompt".
-            Primary target muscle: "$targetMuscleKey".
-            Canvas coordinates are in a 380x250 space (floor is y=200, head is around y=32..50, x is centered around 190).
-            Provide:
-            - name: Short, clear exercise name.
-            - primaryMuscles: comma separated muscle keys (e.g. biceps, chest, quads, etc.).
-            - secondaryMuscles: comma separated secondary keys.
-            - loReps: minimum recommended reps (e.g. 8).
-            - hiReps: maximum recommended reps (e.g. 15).
-            - restSec: rest period in seconds (e.g. 60 to 90).
-            - isSec: true if timed hold (like plank), false for dynamic reps.
-            - loaded: true if hand weights / dumbbells are used.
-            - ladder: array of 6 progressive overload step descriptions.
-            - cue: 1 single-sentence master biomechanical cue.
-            - tipsDo: array of 2 essential "Do" execution tips (stretch emphasis).
-            - tipsDont: array of 2 common mistakes to avoid.
-            - pose: 3 keyframes (start, peak, end) containing (head, shoulder, elbow, wrist, hip, knee, ankle) in the 380x250 coordinate space.
+            You are Gemini 4 Hydrogen, an elite AI hypertrophy scientist & biomechanist.
+            Synthesize a brand new, personalized workout session with custom exercises for this lifter:
+            - Gender: ${profile.gender} | Age: ${profile.age} yrs | Height: ${profile.heightCm} cm | Weight: ${profile.currentWeightKg} kg
+            - Primary Objective: ${profile.goalType} ${if (profile.targetWeightKg != null) "| Target Weight: ${profile.targetWeightKg} kg" else ""}
+            - Target Fat Loss / Toning Focus: ${profile.targetFatLossAreas.joinToString(", ")}
+            - Available Equipment: "${profile.equipmentType}" (CRITICAL: Every exercise MUST use ONLY this equipment!)
+            - Injury Shield / Joint Sensitivities: ${profile.jointPainAreas.joinToString(", ").ifEmpty { "None" }}
+            - Priority Muscle Groups: ${profile.priorityMuscles.joinToString(", ").ifEmpty { "Full Body" }}
+            - Target Time Budget: ${profile.sessionBudgetMins} minutes
+
+            Generate 3 to 5 realistic, high-SFR exercises. For each exercise:
+            - id: short unique slug e.g. "h_incline_curl", "h_floor_press", "h_goblet_squat"
+            - name: descriptive exercise name (e.g. "Incline Dumbbell Curl with 3s Lowering")
+            - primaryMuscles: e.g. "biceps" or "chest" or "quads"
+            - secondaryMuscles: e.g. "forearms" or "triceps"
+            - sets: optimal set count (2 to 4)
+            - loReps: e.g. 8
+            - hiReps: e.g. 15
+            - restSec: e.g. 60 to 90
+            - loaded: true if using weights/bands
+            - cue: 1 elite biomechanical execution cue
+            - tipsDo: array of 2 essential execution pointers
+            - tipsDont: array of 2 common mistakes to avoid
+            - equipmentType: one of "DUMBBELL", "BARBELL", "BENCH", "PULLUP", "BODYWEIGHT", "BANDS"
+        """.trimIndent()
+
+        val payload = buildJsonObject {
+            putJsonArray("contents") {
+                add(buildJsonObject {
+                    putJsonArray("parts") {
+                        add(buildJsonObject { put("text", prompt) })
+                    }
+                })
+            }
+            putJsonObject("generationConfig") {
+                put("responseMimeType", "application/json")
+                if (model.contains("hydrogen") || model.contains("flash")) {
+                    putJsonObject("thinkingConfig") { put("thinkingLevel", thinkingLevel) }
+                }
+                putJsonObject("responseSchema") {
+                    put("type", "ARRAY")
+                    putJsonObject("items") {
+                        put("type", "OBJECT")
+                        putJsonObject("properties") {
+                            putJsonObject("id") { put("type", "STRING") }
+                            putJsonObject("name") { put("type", "STRING") }
+                            putJsonObject("primaryMuscles") { put("type", "STRING") }
+                            putJsonObject("secondaryMuscles") { put("type", "STRING") }
+                            putJsonObject("sets") { put("type", "INTEGER") }
+                            putJsonObject("loReps") { put("type", "INTEGER") }
+                            putJsonObject("hiReps") { put("type", "INTEGER") }
+                            putJsonObject("restSec") { put("type", "INTEGER") }
+                            putJsonObject("loaded") { put("type", "BOOLEAN") }
+                            putJsonObject("cue") { put("type", "STRING") }
+                            putJsonObject("equipmentType") { put("type", "STRING") }
+                            putJsonObject("tipsDo") {
+                                put("type", "ARRAY")
+                                putJsonObject("items") { put("type", "STRING") }
+                            }
+                            putJsonObject("tipsDont") {
+                                put("type", "ARRAY")
+                                putJsonObject("items") { put("type", "STRING") }
+                            }
+                        }
+                        putJsonArray("required") {
+                            add(kotlinx.serialization.json.JsonPrimitive("id"))
+                            add(kotlinx.serialization.json.JsonPrimitive("name"))
+                            add(kotlinx.serialization.json.JsonPrimitive("primaryMuscles"))
+                            add(kotlinx.serialization.json.JsonPrimitive("sets"))
+                            add(kotlinx.serialization.json.JsonPrimitive("loReps"))
+                            add(kotlinx.serialization.json.JsonPrimitive("hiReps"))
+                            add(kotlinx.serialization.json.JsonPrimitive("restSec"))
+                            add(kotlinx.serialization.json.JsonPrimitive("cue"))
+                        }
+                    }
+                }
+            }
+        }.toString()
+
+        val selectedModel = if (model.isNotBlank()) model else "gemini-4-hydrogen"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$selectedModel:generateContent"
+
+        try {
+            val req = Request.Builder()
+                .url(url)
+                .addHeader("x-goog-api-key", apiKey.trim())
+                .addHeader("Content-Type", "application/json")
+                .post(payload.toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val resp = client.newCall(req).execute()
+            if (!resp.isSuccessful) return@withContext null
+            val body = resp.body?.string() ?: return@withContext null
+
+            val root = jsonParser.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject ?: return@withContext null
+            val candArray = root["candidates"] as? kotlinx.serialization.json.JsonArray ?: return@withContext null
+            if (candArray.isEmpty()) return@withContext null
+
+            val content = (candArray[0] as? kotlinx.serialization.json.JsonObject)?.get("content") as? kotlinx.serialization.json.JsonObject ?: return@withContext null
+            val parts = content["parts"] as? kotlinx.serialization.json.JsonArray ?: return@withContext null
+            if (parts.isEmpty()) return@withContext null
+
+            val text = ((parts[0] as? kotlinx.serialization.json.JsonObject)?.get("text") as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@withContext null
+            val arr = jsonParser.parseToJsonElement(text) as? kotlinx.serialization.json.JsonArray ?: return@withContext null
+
+            val exercises = mutableListOf<ExerciseEntity>()
+            val planItems = mutableListOf<PlanItem>()
+
+            for (elem in arr) {
+                val obj = elem as? kotlinx.serialization.json.JsonObject ?: continue
+                val rawId = (obj["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "h_${UUID.randomUUID().toString().take(6)}"
+                val id = if (rawId.startsWith("h_")) rawId else "h_$rawId"
+                val name = (obj["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "Dynamic Exercise"
+                val prim = (obj["primaryMuscles"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "biceps"
+                val sec = (obj["secondaryMuscles"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: ""
+                val sets = (obj["sets"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: 3
+                val lo = (obj["loReps"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: 8
+                val hi = (obj["hiReps"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: 15
+                val rest = (obj["restSec"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: 60
+                val loaded = (obj["loaded"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: true
+                val cue = (obj["cue"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "Control the eccentric lowering."
+                val tipsDo = obj["tipsDo"]?.toString() ?: "[\"Maintain strict control\"]"
+                val tipsDont = obj["tipsDont"]?.toString() ?: "[\"Avoid momentum\"]"
+
+                exercises.add(
+                    ExerciseEntity(
+                        id = id,
+                        name = name,
+                        primaryMuscles = prim,
+                        secondaryMuscles = sec,
+                        loReps = lo,
+                        hiReps = hi,
+                        restSec = rest,
+                        isSec = false,
+                        loaded = loaded,
+                        ladderJson = "[\"Standard Tempo\", \"3s Lowering\", \"3s Lowering + 1s Pause\"]",
+                        cue = cue,
+                        tipsDoJson = tipsDo,
+                        tipsDontJson = tipsDont,
+                        isCustom = true
+                    )
+                )
+
+                planItems.add(PlanItem(ex = id, sets = sets, done = 0))
+            }
+
+            if (exercises.isNotEmpty()) DynamicProgramResult(exercises, planItems) else null
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    /**
+     * Automatic Next-Day Tuning immediately after completing an exercise:
+     * Analyzes logged reps, weight, RIR, and fatigue from the finished exercise to update tomorrow's plan.
+     */
+    suspend fun tuneNextSessionAfterCompletedExercise(
+        apiKey: String,
+        model: String,
+        thinkingLevel: String = "high",
+        completedExName: String,
+        completedExTarget: String,
+        performanceSummary: String,
+        currentTomorrowPlan: List<PlanItem>
+    ): AutoTuneResult? = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) return@withContext null
+
+        val prompt = """
+            You are Gemini 4 Hydrogen. The lifter just finished all sets of an exercise:
+            - Completed Exercise: $completedExName ($completedExTarget)
+            - Performance: $performanceSummary
+            - Current Tomorrow Plan: ${currentTomorrowPlan.joinToString { "${it.ex} (${it.sets} sets)" }}
+
+            Evaluate localized & systemic fatigue:
+            - If performance was very hard (RIR 0-1, heavy failure): reduce volume or adjust recovery buffer for overlapping muscles tomorrow.
+            - If performance was easy (high reps, RIR 3+): capitalize on stimulus readiness.
+            - Return updated exercise plan for tomorrow with a 1-sentence explanation of what was tuned.
         """.trimIndent()
 
         val payload = buildJsonObject {
@@ -167,62 +340,25 @@ object GeminiService {
                 putJsonObject("responseSchema") {
                     put("type", "OBJECT")
                     putJsonObject("properties") {
-                        putJsonObject("name") { put("type", "STRING") }
-                        putJsonObject("primaryMuscles") { put("type", "STRING") }
-                        putJsonObject("secondaryMuscles") { put("type", "STRING") }
-                        putJsonObject("loReps") { put("type", "INTEGER") }
-                        putJsonObject("hiReps") { put("type", "INTEGER") }
-                        putJsonObject("restSec") { put("type", "INTEGER") }
-                        putJsonObject("isSec") { put("type", "BOOLEAN") }
-                        putJsonObject("loaded") { put("type", "BOOLEAN") }
-                        putJsonObject("cue") { put("type", "STRING") }
-                        putJsonObject("ladder") {
+                        putJsonObject("explanation") { put("type", "STRING") }
+                        putJsonObject("plan") {
                             put("type", "ARRAY")
-                            putJsonObject("items") { put("type", "STRING") }
-                        }
-                        putJsonObject("tipsDo") {
-                            put("type", "ARRAY")
-                            putJsonObject("items") { put("type", "STRING") }
-                        }
-                        putJsonObject("tipsDont") {
-                            put("type", "ARRAY")
-                            putJsonObject("items") { put("type", "STRING") }
-                        }
-                        putJsonObject("startJoints") {
-                            put("type", "OBJECT")
-                            putJsonObject("properties") {
-                                putJsonObject("headX") { put("type", "NUMBER") }; putJsonObject("headY") { put("type", "NUMBER") }
-                                putJsonObject("shoulderX") { put("type", "NUMBER") }; putJsonObject("shoulderY") { put("type", "NUMBER") }
-                                putJsonObject("elbowX") { put("type", "NUMBER") }; putJsonObject("elbowY") { put("type", "NUMBER") }
-                                putJsonObject("wristX") { put("type", "NUMBER") }; putJsonObject("wristY") { put("type", "NUMBER") }
-                                putJsonObject("hipX") { put("type", "NUMBER") }; putJsonObject("hipY") { put("type", "NUMBER") }
-                                putJsonObject("kneeX") { put("type", "NUMBER") }; putJsonObject("kneeY") { put("type", "NUMBER") }
-                                putJsonObject("ankleX") { put("type", "NUMBER") }; putJsonObject("ankleY") { put("type", "NUMBER") }
-                            }
-                        }
-                        putJsonObject("peakJoints") {
-                            put("type", "OBJECT")
-                            putJsonObject("properties") {
-                                putJsonObject("headX") { put("type", "NUMBER") }; putJsonObject("headY") { put("type", "NUMBER") }
-                                putJsonObject("shoulderX") { put("type", "NUMBER") }; putJsonObject("shoulderY") { put("type", "NUMBER") }
-                                putJsonObject("elbowX") { put("type", "NUMBER") }; putJsonObject("elbowY") { put("type", "NUMBER") }
-                                putJsonObject("wristX") { put("type", "NUMBER") }; putJsonObject("wristY") { put("type", "NUMBER") }
-                                putJsonObject("hipX") { put("type", "NUMBER") }; putJsonObject("hipY") { put("type", "NUMBER") }
-                                putJsonObject("kneeX") { put("type", "NUMBER") }; putJsonObject("kneeY") { put("type", "NUMBER") }
-                                putJsonObject("ankleX") { put("type", "NUMBER") }; putJsonObject("ankleY") { put("type", "NUMBER") }
+                            putJsonObject("items") {
+                                put("type", "OBJECT")
+                                putJsonObject("properties") {
+                                    putJsonObject("ex") { put("type", "STRING") }
+                                    putJsonObject("sets") { put("type", "INTEGER") }
+                                }
+                                putJsonArray("required") {
+                                    add(kotlinx.serialization.json.JsonPrimitive("ex"))
+                                    add(kotlinx.serialization.json.JsonPrimitive("sets"))
+                                }
                             }
                         }
                     }
                     putJsonArray("required") {
-                        add(kotlinx.serialization.json.JsonPrimitive("name"))
-                        add(kotlinx.serialization.json.JsonPrimitive("primaryMuscles"))
-                        add(kotlinx.serialization.json.JsonPrimitive("loReps"))
-                        add(kotlinx.serialization.json.JsonPrimitive("hiReps"))
-                        add(kotlinx.serialization.json.JsonPrimitive("restSec"))
-                        add(kotlinx.serialization.json.JsonPrimitive("ladder"))
-                        add(kotlinx.serialization.json.JsonPrimitive("cue"))
-                        add(kotlinx.serialization.json.JsonPrimitive("tipsDo"))
-                        add(kotlinx.serialization.json.JsonPrimitive("tipsDont"))
+                        add(kotlinx.serialization.json.JsonPrimitive("explanation"))
+                        add(kotlinx.serialization.json.JsonPrimitive("plan"))
                     }
                 }
             }
@@ -254,7 +390,129 @@ object GeminiService {
             val text = ((parts[0] as? kotlinx.serialization.json.JsonObject)?.get("text") as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@withContext null
             val obj = jsonParser.parseToJsonElement(text) as? kotlinx.serialization.json.JsonObject ?: return@withContext null
 
-            val newId = "custom_" + UUID.randomUUID().toString().take(8)
+            val explanation = (obj["explanation"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "Optimized volume and recovery buffer for tomorrow."
+            val planArr = obj["plan"] as? kotlinx.serialization.json.JsonArray ?: return@withContext null
+
+            val items = mutableListOf<PlanItem>()
+            for (elem in planArr) {
+                val itemObj = elem as? kotlinx.serialization.json.JsonObject ?: continue
+                val ex = (itemObj["ex"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: continue
+                val sets = (itemObj["sets"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: 3
+                items.add(PlanItem(ex = ex, sets = sets, done = 0))
+            }
+            if (items.isNotEmpty()) AutoTuneResult(items, explanation) else null
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    /**
+     * Synthesizes a single targeted exercise from user prompt & target muscle.
+     */
+    suspend fun generateExercise(
+        apiKey: String,
+        model: String,
+        thinkingLevel: String = "high",
+        userPrompt: String,
+        targetMuscleKey: String
+    ): ExerciseEntity? = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) return@withContext null
+
+        val prompt = """
+            Create a complete, evidence-based exercise for hypertrophy based on user request: "$userPrompt".
+            Primary target muscle: "$targetMuscleKey".
+            Provide:
+            - id: short slug e.g. "h_exercise_name"
+            - name: Short, clear exercise name.
+            - primaryMuscles: comma separated muscle keys (e.g. biceps, chest, quads, etc.).
+            - secondaryMuscles: comma separated secondary keys.
+            - loReps: minimum recommended reps (e.g. 8).
+            - hiReps: maximum recommended reps (e.g. 15).
+            - restSec: rest period in seconds (e.g. 60 to 90).
+            - isSec: false for dynamic reps, true for timed hold.
+            - loaded: true if hand weights / dumbbells are used.
+            - cue: 1 single-sentence master biomechanical cue.
+            - tipsDo: array of 2 essential execution tips.
+            - tipsDont: array of 2 common mistakes to avoid.
+        """.trimIndent()
+
+        val payload = buildJsonObject {
+            putJsonArray("contents") {
+                add(buildJsonObject {
+                    putJsonArray("parts") {
+                        add(buildJsonObject { put("text", prompt) })
+                    }
+                })
+            }
+            putJsonObject("generationConfig") {
+                put("responseMimeType", "application/json")
+                if (model.contains("hydrogen") || model.contains("flash")) {
+                    putJsonObject("thinkingConfig") { put("thinkingLevel", thinkingLevel) }
+                }
+                putJsonObject("responseSchema") {
+                    put("type", "OBJECT")
+                    putJsonObject("properties") {
+                        putJsonObject("id") { put("type", "STRING") }
+                        putJsonObject("name") { put("type", "STRING") }
+                        putJsonObject("primaryMuscles") { put("type", "STRING") }
+                        putJsonObject("secondaryMuscles") { put("type", "STRING") }
+                        putJsonObject("loReps") { put("type", "INTEGER") }
+                        putJsonObject("hiReps") { put("type", "INTEGER") }
+                        putJsonObject("restSec") { put("type", "INTEGER") }
+                        putJsonObject("isSec") { put("type", "BOOLEAN") }
+                        putJsonObject("loaded") { put("type", "BOOLEAN") }
+                        putJsonObject("cue") { put("type", "STRING") }
+                        putJsonObject("tipsDo") {
+                            put("type", "ARRAY")
+                            putJsonObject("items") { put("type", "STRING") }
+                        }
+                        putJsonObject("tipsDont") {
+                            put("type", "ARRAY")
+                            putJsonObject("items") { put("type", "STRING") }
+                        }
+                    }
+                    putJsonArray("required") {
+                        add(kotlinx.serialization.json.JsonPrimitive("id"))
+                        add(kotlinx.serialization.json.JsonPrimitive("name"))
+                        add(kotlinx.serialization.json.JsonPrimitive("primaryMuscles"))
+                        add(kotlinx.serialization.json.JsonPrimitive("loReps"))
+                        add(kotlinx.serialization.json.JsonPrimitive("hiReps"))
+                        add(kotlinx.serialization.json.JsonPrimitive("restSec"))
+                        add(kotlinx.serialization.json.JsonPrimitive("cue"))
+                    }
+                }
+            }
+        }.toString()
+
+        val selectedModel = if (model.isNotBlank()) model else "gemini-4-hydrogen"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$selectedModel:generateContent"
+
+        try {
+            val req = Request.Builder()
+                .url(url)
+                .addHeader("x-goog-api-key", apiKey.trim())
+                .addHeader("Content-Type", "application/json")
+                .post(payload.toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val resp = client.newCall(req).execute()
+            if (!resp.isSuccessful) return@withContext null
+            val body = resp.body?.string() ?: return@withContext null
+
+            val root = jsonParser.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject ?: return@withContext null
+            val candArray = root["candidates"] as? kotlinx.serialization.json.JsonArray ?: return@withContext null
+            if (candArray.isEmpty()) return@withContext null
+
+            val content = (candArray[0] as? kotlinx.serialization.json.JsonObject)?.get("content") as? kotlinx.serialization.json.JsonObject ?: return@withContext null
+            val parts = content["parts"] as? kotlinx.serialization.json.JsonArray ?: return@withContext null
+            if (parts.isEmpty()) return@withContext null
+
+            val text = ((parts[0] as? kotlinx.serialization.json.JsonObject)?.get("text") as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@withContext null
+            val obj = jsonParser.parseToJsonElement(text) as? kotlinx.serialization.json.JsonObject ?: return@withContext null
+
+            val rawId = (obj["id"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "h_${UUID.randomUUID().toString().take(6)}"
+            val id = if (rawId.startsWith("h_")) rawId else "h_$rawId"
             val name = (obj["name"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "Custom Exercise"
             val prim = (obj["primaryMuscles"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: targetMuscleKey
             val sec = (obj["secondaryMuscles"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: ""
@@ -262,40 +520,13 @@ object GeminiService {
             val hi = (obj["hiReps"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: 15
             val rest = (obj["restSec"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: 60
             val isSec = (obj["isSec"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false
-            val loaded = (obj["loaded"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: false
-            val cue = (obj["cue"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: ""
-            val ladder = obj["ladder"]?.toString() ?: "[\"Step 1\"]"
-            val tipsDo = obj["tipsDo"]?.toString() ?: "[\"Focus on form\"]"
-            val tipsDont = obj["tipsDont"]?.toString() ?: "[\"Avoid swinging\"]"
+            val loaded = (obj["loaded"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toBooleanStrictOrNull() ?: true
+            val cue = (obj["cue"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "Control the eccentric lowering."
+            val tipsDo = obj["tipsDo"]?.toString() ?: "[\"Full range of motion\"]"
+            val tipsDont = obj["tipsDont"]?.toString() ?: "[\"Avoid momentum\"]"
 
-            // Construct 3-phase keyframe pose JSON
-            val startJ = obj["startJoints"] as? kotlinx.serialization.json.JsonObject
-            val peakJ = obj["peakJoints"] as? kotlinx.serialization.json.JsonObject
-
-            val poseKeyframes = if (startJ != null && peakJ != null) {
-                fun parseJ(j: kotlinx.serialization.json.JsonObject) = KeyframeJoints(
-                    headX = (j["headX"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toFloatOrNull() ?: 190f,
-                    headY = (j["headY"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toFloatOrNull() ?: 32f,
-                    shoulderX = (j["shoulderX"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toFloatOrNull() ?: 190f,
-                    shoulderY = (j["shoulderY"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toFloatOrNull() ?: 48f,
-                    elbowX = (j["elbowX"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toFloatOrNull() ?: 193f,
-                    elbowY = (j["elbowY"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toFloatOrNull() ?: 82f,
-                    wristX = (j["wristX"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toFloatOrNull() ?: 195f,
-                    wristY = (j["wristY"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toFloatOrNull() ?: 116f,
-                    hipX = (j["hipX"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toFloatOrNull() ?: 190f,
-                    hipY = (j["hipY"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toFloatOrNull() ?: 104f,
-                    kneeX = (j["kneeX"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toFloatOrNull() ?: 190f,
-                    kneeY = (j["kneeY"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toFloatOrNull() ?: 152f,
-                    ankleX = (j["ankleX"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toFloatOrNull() ?: 190f,
-                    ankleY = (j["ankleY"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toFloatOrNull() ?: 200f,
-                )
-                val sKey = parseJ(startJ)
-                val pKey = parseJ(peakJ)
-                Json.encodeToString(PoseKeyframes(start = sKey, peak = pKey, end = sKey))
-            } else ""
-
-            return@withContext ExerciseEntity(
-                id = newId,
+            ExerciseEntity(
+                id = id,
                 name = name,
                 primaryMuscles = prim,
                 secondaryMuscles = sec,
@@ -304,11 +535,11 @@ object GeminiService {
                 restSec = rest,
                 isSec = isSec,
                 loaded = loaded,
-                ladderJson = ladder,
+                ladderJson = "[\"Standard Tempo\", \"3s Lowering\", \"3s Lowering + 1s Pause\"]",
                 cue = cue,
                 tipsDoJson = tipsDo,
                 tipsDontJson = tipsDont,
-                poseJson = poseKeyframes,
+                poseJson = "",
                 videoPath = "",
                 isCustom = true,
                 archived = false
@@ -320,8 +551,7 @@ object GeminiService {
     }
 
     /**
-     * AI Exercise Auto-Tuning: Modifies an existing exercise's 3D kinematic parameters,
-     * rep ladders, cues, and equipment configurations based on lifter prompt.
+     * AI Exercise Auto-Tuning: Modifies an existing exercise's parameters based on user instruction.
      */
     suspend fun tuneExercise(
         apiKey: String,
@@ -343,12 +573,7 @@ object GeminiService {
 
             User Tuning Instruction: "$userInstruction"
 
-            Produce a tuned variant with:
-            - name: refined exercise title
-            - cue: updated coaching cue emphasizing the biomechanical change
-            - loReps / hiReps: adapted rep target
-            - restSec: recommended recovery seconds
-            - tipsDo / tipsDont: 2 updated actionable pointers
+            Produce a tuned variant with refined name, cue, loReps, hiReps, and restSec.
         """.trimIndent()
 
         val payload = buildJsonObject {
@@ -372,14 +597,6 @@ object GeminiService {
                         putJsonObject("loReps") { put("type", "INTEGER") }
                         putJsonObject("hiReps") { put("type", "INTEGER") }
                         putJsonObject("restSec") { put("type", "INTEGER") }
-                        putJsonObject("tipsDo") {
-                            put("type", "ARRAY")
-                            putJsonObject("items") { put("type", "STRING") }
-                        }
-                        putJsonObject("tipsDont") {
-                            put("type", "ARRAY")
-                            putJsonObject("items") { put("type", "STRING") }
-                        }
                     }
                     putJsonArray("required") {
                         add(kotlinx.serialization.json.JsonPrimitive("name"))
@@ -423,17 +640,13 @@ object GeminiService {
             val lo = (obj["loReps"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: currentExercise.loReps
             val hi = (obj["hiReps"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: currentExercise.hiReps
             val rest = (obj["restSec"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: currentExercise.restSec
-            val tipsDo = obj["tipsDo"]?.toString() ?: currentExercise.tipsDoJson
-            val tipsDont = obj["tipsDont"]?.toString() ?: currentExercise.tipsDontJson
 
-            return@withContext currentExercise.copy(
+            currentExercise.copy(
                 name = name,
                 cue = cue,
                 loReps = lo,
                 hiReps = hi,
                 restSec = rest,
-                tipsDoJson = tipsDo,
-                tipsDontJson = tipsDont,
                 isCustom = true
             )
         } catch (e: Exception) {
@@ -443,9 +656,7 @@ object GeminiService {
     }
 
     /**
-     * Next-Day AI Auto-Tuning Engine:
-     * Analyzes past 7 days of training logs (sets, reps, loads kg, RIR, soreness tags)
-     * and formulates the optimal workout session for tomorrow for maximal hypertrophy.
+     * Next-Day AI Auto-Tuning Engine from historical logs.
      */
     suspend fun tuneNextDaySession(
         apiKey: String,
@@ -467,7 +678,7 @@ object GeminiService {
             Apply maximum stimulus-to-fatigue ratio (SFR):
             - De-prioritize sore or heavily fatigued muscle groups.
             - Target muscle groups with high recovery readiness.
-            - Choose 2 to 4 exercises from available pool: curl, conc, bicep, bench, pushup, squat, split_squat, row, latraise, ohip, dip.
+            - Choose 2 to 4 exercises from available pool.
             - Output array of exercises with optimal set counts (2 to 4 sets each).
         """.trimIndent()
 
@@ -535,113 +746,6 @@ object GeminiService {
                 items.add(PlanItem(ex = ex, sets = sets, done = 0))
             }
             if (items.isNotEmpty()) items else null
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
-        }
-    }
-
-    /**
-     * Synthesizes an entire 7-day personalized dynamic hypertrophy program
-     * based on the 6-step deep biomechanical survey and free-form priority text.
-     */
-    suspend fun generateWeekProgram(
-        apiKey: String,
-        model: String,
-        thinkingLevel: String = "high",
-        profile: OnboardingProfile
-    ): List<PlanItem>? = withContext(Dispatchers.IO) {
-        if (apiKey.isBlank()) return@withContext null
-
-        val prompt = """
-            You are an elite hypertrophy scientist and biomechanist using Gemini 4 Hydrogen.
-            Design the optimal foundational day-1 workout session and 7-day progression framework for this lifter:
-            - Gender: ${profile.gender}
-            - Age: ${profile.age} years | Height: ${profile.heightCm} cm | Weight: ${profile.currentWeightKg} kg
-            - Primary Objective: ${profile.goalType} ${if (profile.targetWeightKg != null) "| Target Weight: ${profile.targetWeightKg} kg" else ""}
-            - Targeted Fat Loss & Regional Toning Zones: ${profile.targetFatLossAreas.joinToString(", ").ifEmpty { "Balanced Full Body" }}
-            - Joint Pain / Injury Shield: ${profile.jointPainAreas.joinToString(", ").ifEmpty { "None" }}
-            - Target Weak Points / Priority Muscles: ${profile.priorityMuscles.joinToString(", ").ifEmpty { "Balanced Full Body" }}
-            - Training Frequency: ${profile.daysPerWeek} days / week
-            - Session Time Budget: ${profile.sessionBudgetMins} minutes
-            - Available Equipment: ${profile.equipmentType}
-            - Custom Priority Request: "${profile.customPriorityText}"
-
-            Biomechanical Guidelines:
-            - Consider sexual dimorphism in muscle recovery, fatigue resistance (females often recover faster intra-set and benefit from higher rep volume; males generally handle higher peak absolute intensity).
-            - If Goal is 'Fat Loss & Lean Toning' or 'Body Recomposition': incorporate metabolic compound movements (e.g. pushups, squats) with strict 3-4s eccentric cadence to maximize lean muscle sparing in a caloric deficit.
-            - If specific Fat Loss/Toning areas are selected (e.g. Belly & Core, Love Handles): ensure dedicated core/abdominal stability exercises (e.g. deadbug, plank, reverse crunch) and compound hinge/squat movements are prioritized.
-            - If Age > 40: reduce axial spinal compression and provide joint-friendly movement variations.
-            - Avoid exercises that exacerbate the lifter's joint pain areas (e.g. if shoulder pain, prefer neutral grip / pushup progression; if lower back, avoid excessive axial shear).
-            - Strongly bias sets toward target weak points and custom priority.
-            - Choose 3 to 5 optimal exercises from the catalog: curl, conc, bicep, bench, pushup, squat, split_squat, row, latraise, ohip, dip.
-            - Assign optimal set count (2 to 4 sets per exercise) fitting within the ${profile.sessionBudgetMins} min session budget.
-        """.trimIndent()
-
-        val payload = buildJsonObject {
-            putJsonArray("contents") {
-                add(buildJsonObject {
-                    putJsonArray("parts") {
-                        add(buildJsonObject { put("text", prompt) })
-                    }
-                })
-            }
-            putJsonObject("generationConfig") {
-                put("responseMimeType", "application/json")
-                if (model.contains("hydrogen") || model.contains("flash")) {
-                    putJsonObject("thinkingConfig") { put("thinkingLevel", thinkingLevel) }
-                }
-                putJsonObject("responseSchema") {
-                    put("type", "ARRAY")
-                    putJsonObject("items") {
-                        put("type", "OBJECT")
-                        putJsonObject("properties") {
-                            putJsonObject("ex") { put("type", "STRING") }
-                            putJsonObject("sets") { put("type", "INTEGER") }
-                        }
-                        putJsonArray("required") {
-                            add(kotlinx.serialization.json.JsonPrimitive("ex"))
-                            add(kotlinx.serialization.json.JsonPrimitive("sets"))
-                        }
-                    }
-                }
-            }
-        }.toString()
-
-        val selectedModel = if (model.isNotBlank()) model else "gemini-4-hydrogen"
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/$selectedModel:generateContent"
-
-        try {
-            val req = Request.Builder()
-                .url(url)
-                .addHeader("x-goog-api-key", apiKey.trim())
-                .addHeader("Content-Type", "application/json")
-                .post(payload.toRequestBody("application/json".toMediaType()))
-                .build()
-
-            val resp = client.newCall(req).execute()
-            if (!resp.isSuccessful) return@withContext null
-            val body = resp.body?.string() ?: return@withContext null
-
-            val root = jsonParser.parseToJsonElement(body) as? kotlinx.serialization.json.JsonObject ?: return@withContext null
-            val candArray = root["candidates"] as? kotlinx.serialization.json.JsonArray ?: return@withContext null
-            if (candArray.isEmpty()) return@withContext null
-
-            val content = (candArray[0] as? kotlinx.serialization.json.JsonObject)?.get("content") as? kotlinx.serialization.json.JsonObject ?: return@withContext null
-            val parts = content["parts"] as? kotlinx.serialization.json.JsonArray ?: return@withContext null
-            if (parts.isEmpty()) return@withContext null
-
-            val text = ((parts[0] as? kotlinx.serialization.json.JsonObject)?.get("text") as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return@withContext null
-            val arr = jsonParser.parseToJsonElement(text) as? kotlinx.serialization.json.JsonArray ?: return@withContext null
-
-            val plan = mutableListOf<PlanItem>()
-            for (elem in arr) {
-                val obj = elem as? kotlinx.serialization.json.JsonObject ?: continue
-                val ex = (obj["ex"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: continue
-                val sets = (obj["sets"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull() ?: 3
-                plan.add(PlanItem(ex = ex, sets = sets, done = 0))
-            }
-            if (plan.isNotEmpty()) plan else null
         } catch (e: Exception) {
             e.printStackTrace()
             null
