@@ -268,7 +268,8 @@ fun TodayScreen(vm: TrackerVM) {
 
         // Today's Pre-Workout Briefing & Equipment Checklist Card
         com.praveen.hypertrophy.ui.PreWorkoutBriefingCard(
-            activeExerciseId = firstExId
+            activeExerciseId = firstExId,
+            profile = st.onboardingProfile
         )
 
         Panel {

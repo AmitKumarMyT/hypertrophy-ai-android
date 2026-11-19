@@ -204,6 +204,12 @@ data class AISettings(
 
 @Serializable
 data class OnboardingProfile(
+    val age: Int = 25,
+    val heightCm: Float = 175f,
+    val currentWeightKg: Float = 75f,
+    val goalType: String = "Hypertrophy", // "Hypertrophy", "Fat Loss & Lean Toning", "Body Recomposition", "Strength"
+    val targetWeightKg: Float? = null,
+    val targetFatLossAreas: List<String> = emptyList(), // "Belly & Core", "Love Handles", "Chest", "Thighs & Glutes", "Arms"
     val jointPainAreas: List<String> = emptyList(),
     val priorityMuscles: List<String> = emptyList(),
     val daysPerWeek: Int = 4,

@@ -42,6 +42,7 @@ import com.praveen.hypertrophy.EX
 @Composable
 fun PreWorkoutBriefingCard(
     activeExerciseId: String,
+    profile: com.praveen.hypertrophy.OnboardingProfile? = null,
     modifier: Modifier = Modifier
 ) {
     var showPreviewModal by remember { mutableStateOf(false) }
@@ -139,6 +140,45 @@ fun PreWorkoutBriefingCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                // If profile has goal/weight targets, display high-contrast transformation badge
+                if (profile != null) {
+                    val goalBadgeText = when {
+                        profile.targetWeightKg != null -> "🎯 ${profile.goalType}: ${profile.currentWeightKg.toInt()}kg ➔ ${profile.targetWeightKg.toInt()}kg"
+                        else -> "⚡ ${profile.goalType}"
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFFE2F952).copy(alpha = 0.2f))
+                            .border(1.dp, Color(0xFFE2F952), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 9.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = goalBadgeText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFE2F952),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    if (profile.targetFatLossAreas.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF38BDF8).copy(alpha = 0.15f))
+                                .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 9.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = "🔥 Focus: ${profile.targetFatLossAreas.first()}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF38BDF8),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
                 for (item in equipmentList) {
                     Box(
                         modifier = Modifier

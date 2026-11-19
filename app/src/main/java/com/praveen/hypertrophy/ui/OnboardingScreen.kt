@@ -20,8 +20,8 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -31,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.praveen.hypertrophy.OnboardingProfile
@@ -52,8 +54,19 @@ fun OnboardingScreen(
     onComplete: (OnboardingProfile) -> Unit
 ) {
     var step by remember { mutableIntStateOf(0) }
+    val totalSteps = 7
 
-    // Survey Responses State
+    // Biometrics State
+    var ageText by remember { mutableStateOf("25") }
+    var heightCmText by remember { mutableStateOf("175") }
+    var weightKgText by remember { mutableStateOf("75") }
+
+    // Goal & Fat Loss State
+    var selectedGoal by remember { mutableStateOf("Hypertrophy") }
+    var targetWeightText by remember { mutableStateOf("70") }
+    val targetFatLossAreas = remember { mutableStateListOf<String>("Belly & Deep Core") }
+
+    // Training & Safety State
     val jointPainAreas = remember { mutableStateListOf<String>() }
     val priorityMuscles = remember { mutableStateListOf<String>() }
     var daysPerWeek by remember { mutableIntStateOf(4) }
@@ -92,14 +105,14 @@ fun OnboardingScreen(
                             letterSpacing = 1.2.sp
                         )
                         Text(
-                            text = "Initial Intake Survey",
+                            text = "Intake & Body Blueprint",
                             style = MaterialTheme.typography.titleLarge,
                             color = Color.White,
                             fontWeight = FontWeight.Bold
                         )
                     }
                     Text(
-                        text = "STEP ${step + 1} OF 6",
+                        text = "STEP ${step + 1} OF $totalSteps",
                         style = MaterialTheme.typography.labelMedium,
                         color = Color(0xFF8E95A5),
                         fontWeight = FontWeight.Bold
@@ -111,9 +124,9 @@ fun OnboardingScreen(
                 // Step Progress Pill Bar
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    for (i in 0 until 6) {
+                    for (i in 0 until totalSteps) {
                         Box(
                             modifier = Modifier
                                 .weight(1f)
@@ -124,12 +137,227 @@ fun OnboardingScreen(
                     }
                 }
 
-                Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(26.dp))
 
-                // Questionnaire Content by Step
+                // Step 0: Anthropometrics (Age, Height, Weight)
                 when (step) {
                     0 -> {
-                        // Step 1: Joint Health & Injury Shield
+                        Text(
+                            text = "Your Physical Profile",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Gemini uses your biometrics to calculate metabolic recovery, lever arm physics, and joint strain thresholds.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFF8E95A5),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        Spacer(Modifier.height(14.dp))
+
+                        // Age Field
+                        OutlinedTextField(
+                            value = ageText,
+                            onValueChange = { ageText = it.filter { c -> c.isDigit() }.take(3) },
+                            label = { Text("Age (years)") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color(0xFF141519),
+                                unfocusedContainerColor = Color(0xFF141519),
+                                focusedBorderColor = Color(0xFFE2F952),
+                                unfocusedBorderColor = Color(0xFF22252C),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+
+                        Spacer(Modifier.height(12.dp))
+
+                        // Height Field (with approx feet/inches hint)
+                        val hVal = heightCmText.toFloatOrNull() ?: 175f
+                        val totalInches = (hVal / 2.54f).toInt()
+                        val feet = totalInches / 12
+                        val inches = totalInches % 12
+
+                        OutlinedTextField(
+                            value = heightCmText,
+                            onValueChange = { heightCmText = it.filter { c -> c.isDigit() }.take(3) },
+                            label = { Text("Height (cm)") },
+                            supportingText = { Text("≈ $feet ft $inches in", color = Color(0xFF8E95A5)) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color(0xFF141519),
+                                unfocusedContainerColor = Color(0xFF141519),
+                                focusedBorderColor = Color(0xFFE2F952),
+                                unfocusedBorderColor = Color(0xFF22252C),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        // Current Weight Field (with approx lbs hint)
+                        val wVal = weightKgText.toFloatOrNull() ?: 75f
+                        val lbs = (wVal * 2.20462f).toInt()
+
+                        OutlinedTextField(
+                            value = weightKgText,
+                            onValueChange = { weightKgText = it.filter { c -> c.isDigit() || c == '.' }.take(5) },
+                            label = { Text("Current Weight (kg)") },
+                            supportingText = { Text("≈ $lbs lbs", color = Color(0xFF8E95A5)) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color(0xFF141519),
+                                unfocusedContainerColor = Color(0xFF141519),
+                                focusedBorderColor = Color(0xFFE2F952),
+                                unfocusedBorderColor = Color(0xFF22252C),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+                    }
+
+                    // Step 1: Primary Goal Selection
+                    1 -> {
+                        Text(
+                            text = "Primary Transformation Goal",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "How would you like to direct your stimulus and energy expenditure?",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFF8E95A5),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        Spacer(Modifier.height(10.dp))
+
+                        listOf(
+                            "Hypertrophy" to "Maximal Muscle Hypertrophy & Density (Surplus / Maintenance)",
+                            "Fat Loss & Lean Toning" to "Drop Body Fat, Tighten Regional Muscle & Retain Mass",
+                            "Body Recomposition" to "Simultaneous Fat Oxidation & Lean Muscle Gain",
+                            "Strength & Power" to "Peak Force Output, Neurological Drive & Low RPE"
+                        ).forEach { (goal, desc) ->
+                            val isSel = selectedGoal == goal
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isSel) Color(0xFF1E2024) else Color(0xFF141519))
+                                    .border(
+                                        width = if (isSel) 2.dp else 1.dp,
+                                        color = if (isSel) Color(0xFFE2F952) else Color(0xFF22252C),
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                    .clickable { selectedGoal = goal }
+                                    .padding(16.dp)
+                            ) {
+                                Column {
+                                    Text(
+                                        text = goal,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSel) Color(0xFFE2F952) else Color.White
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        text = desc,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF8E95A5)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Step 2: Weight Loss Target & Targeted Fat Loss Zones
+                    2 -> {
+                        Text(
+                            text = "Targeted Weight Loss & Toning Zones",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Specify your target goal weight and select the body regions to prioritize for metabolic conditioning and muscle tightening.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFF8E95A5),
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+
+                        Spacer(Modifier.height(10.dp))
+
+                        OutlinedTextField(
+                            value = targetWeightText,
+                            onValueChange = { targetWeightText = it.filter { c -> c.isDigit() || c == '.' }.take(5) },
+                            label = { Text("Target Goal Weight (kg)") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color(0xFF141519),
+                                unfocusedContainerColor = Color(0xFF141519),
+                                focusedBorderColor = Color(0xFFE2F952),
+                                unfocusedBorderColor = Color(0xFF22252C),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+
+                        Spacer(Modifier.height(16.dp))
+
+                        Text(
+                            text = "Targeted Fat Loss & Toning Areas:",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color(0xFFE2F952),
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                "Belly & Deep Core",
+                                "Love Handles & Lower Back",
+                                "Chest / Upper Body",
+                                "Thighs & Glutes",
+                                "Arms & Shoulders",
+                                "Full Body Overall"
+                            ).forEach { area ->
+                                val isSelected = targetFatLossAreas.contains(area)
+                                SurveyChip(
+                                    label = area,
+                                    selected = isSelected,
+                                    onClick = {
+                                        if (isSelected) targetFatLossAreas.remove(area)
+                                        else targetFatLossAreas.add(area)
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Step 3: Joint Health & Injury Shield
+                    3 -> {
                         Text(
                             text = "Joint Health & Injury Shield",
                             style = MaterialTheme.typography.titleMedium,
@@ -137,12 +365,12 @@ fun OnboardingScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Select any areas with prior strain or sensitivity. Gemini 4 Hydrogen will de-load stress on these joints.",
+                            text = "Select any areas with prior strain or sensitivity. Gemini will adapt exercise biomechanics to protect these joints.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color(0xFF8E95A5),
                             modifier = Modifier.padding(vertical = 8.dp)
                         )
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(10.dp))
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -165,8 +393,8 @@ fun OnboardingScreen(
                         }
                     }
 
-                    1 -> {
-                        // Step 2: Target Weak Points
+                    // Step 4: Muscle Hypertrophy Weak Points
+                    4 -> {
                         Text(
                             text = "Priority Muscle Groups",
                             style = MaterialTheme.typography.titleMedium,
@@ -174,12 +402,12 @@ fun OnboardingScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Which areas would you like to emphasize with extra volume and stimulus?",
+                            text = "Select muscles where you want specialized progressive overload ladders.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color(0xFF8E95A5),
                             modifier = Modifier.padding(vertical = 8.dp)
                         )
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(10.dp))
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -198,183 +426,125 @@ fun OnboardingScreen(
                         }
                     }
 
-                    2 -> {
-                        // Step 3: Weekly Training Frequency
+                    // Step 5: Frequency & Equipment
+                    5 -> {
                         Text(
-                            text = "Training Frequency",
+                            text = "Schedule & Equipment",
                             style = MaterialTheme.typography.titleMedium,
                             color = Color.White,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(
-                            text = "How many days per week can you consistently train?",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color(0xFF8E95A5),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-                        Spacer(Modifier.height(16.dp))
+                        Spacer(Modifier.height(12.dp))
+
+                        Text("Days Per Week", style = MaterialTheme.typography.labelMedium, color = Color(0xFF8E95A5))
+                        Spacer(Modifier.height(6.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            listOf(3, 4, 5, 6).forEach { days ->
+                            listOf(3, 4, 5, 6).forEach { d ->
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(60.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(if (daysPerWeek == days) Color(0xFFE2F952) else Color(0xFF1E2024))
-                                        .clickable { daysPerWeek = days }
-                                        .padding(8.dp),
+                                        .height(50.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (daysPerWeek == d) Color(0xFFE2F952) else Color(0xFF1E2024))
+                                        .clickable { daysPerWeek = d },
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Text(
-                                            text = "$days",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (daysPerWeek == days) Color(0xFF0E0E10) else Color.White
-                                        )
-                                        Text(
-                                            text = "DAYS",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = if (daysPerWeek == days) Color(0xFF0E0E10) else Color(0xFF8E95A5)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    3 -> {
-                        // Step 4: Session Duration Budget
-                        Text(
-                            text = "Session Time Budget",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "How long would you like each training session to last?",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color(0xFF8E95A5),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        listOf(
-                            15 to "Express Hypertrophy (High SFR, Short Rest)",
-                            30 to "Optimal Standard (Full Volume & Recovery)",
-                            45 to "Comprehensive (Max Volume & Specialized Ladders)"
-                        ).forEach { (mins, desc) ->
-                            val isSel = sessionBudgetMins == mins
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 6.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(if (isSel) Color(0xFF1E2024) else Color(0xFF141519))
-                                    .border(
-                                        width = if (isSel) 2.dp else 1.dp,
-                                        color = if (isSel) Color(0xFFE2F952) else Color(0xFF22252C),
-                                        shape = RoundedCornerShape(12.dp)
-                                    )
-                                    .clickable { sessionBudgetMins = mins }
-                                    .padding(16.dp)
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
-                                        text = "$mins MIN",
-                                        style = MaterialTheme.typography.titleMedium,
+                                        "$d DAYS",
+                                        style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold,
-                                        color = if (isSel) Color(0xFFE2F952) else Color.White,
-                                        modifier = Modifier.width(80.dp)
-                                    )
-                                    Text(
-                                        text = desc,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFF8E95A5)
+                                        color = if (daysPerWeek == d) Color(0xFF0E0E10) else Color.White
                                     )
                                 }
                             }
                         }
-                    }
 
-                    4 -> {
-                        // Step 5: Available Equipment Access
-                        Text(
-                            text = "Gym Equipment Access",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Select what equipment is at your disposal for 3D modeling and exercise selection.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color(0xFF8E95A5),
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(14.dp))
+
+                        Text("Session Duration", style = MaterialTheme.typography.labelMedium, color = Color(0xFF8E95A5))
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(15, 30, 45).forEach { m ->
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(50.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (sessionBudgetMins == m) Color(0xFFE2F952) else Color(0xFF1E2024))
+                                        .clickable { sessionBudgetMins = m },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        "$m MIN",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (sessionBudgetMins == m) Color(0xFF0E0E10) else Color.White
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(14.dp))
+
+                        Text("Available Equipment", style = MaterialTheme.typography.labelMedium, color = Color(0xFF8E95A5))
+                        Spacer(Modifier.height(6.dp))
                         listOf(
                             "Full Gym" to "Olympic Barbells, Benches, Power Racks & Cables",
-                            "Home Dumbbells & Bench" to "Hex Dumbbells and Adjustable Workout Bench",
-                            "Minimalist Bodyweight" to "Bodyweight, Push-up Bars and Pull-up Bar"
+                            "Home Dumbbells & Bench" to "Hex Dumbbells and Adjustable Bench",
+                            "Minimalist Bodyweight" to "Bodyweight & Pushup/Pullup Bars"
                         ).forEach { (type, desc) ->
                             val isSel = equipmentType == type
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 6.dp)
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .padding(vertical = 4.dp)
+                                    .clip(RoundedCornerShape(10.dp))
                                     .background(if (isSel) Color(0xFF1E2024) else Color(0xFF141519))
                                     .border(
                                         width = if (isSel) 2.dp else 1.dp,
                                         color = if (isSel) Color(0xFFE2F952) else Color(0xFF22252C),
-                                        shape = RoundedCornerShape(12.dp)
+                                        shape = RoundedCornerShape(10.dp)
                                     )
                                     .clickable { equipmentType = type }
-                                    .padding(16.dp)
+                                    .padding(12.dp)
                             ) {
-                                Column {
-                                    Text(
-                                        text = type,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isSel) Color(0xFFE2F952) else Color.White
-                                    )
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        text = desc,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = Color(0xFF8E95A5)
-                                    )
-                                }
+                                Text(
+                                    text = "$type ($desc)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (isSel) Color(0xFFE2F952) else Color.White
+                                )
                             }
                         }
                     }
 
-                    5 -> {
-                        // Step 6: Open Priority Free-Form Text Box
+                    // Step 6: Custom Priority Prompt
+                    6 -> {
                         Text(
-                            text = "Primary Goal & Custom Priority",
+                            text = "Custom Priority Request",
                             style = MaterialTheme.typography.titleMedium,
                             color = Color.White,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Tell Gemini 4 Hydrogen exactly what you want to achieve or any specific constraints (only asked once).",
+                            text = "Enter any specific priorities or instructions for Gemini 4 Hydrogen (only asked once).",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Color(0xFF8E95A5),
                             modifier = Modifier.padding(vertical = 8.dp)
                         )
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(10.dp))
 
                         OutlinedTextField(
                             value = customPriorityText,
                             onValueChange = { customPriorityText = it },
                             placeholder = {
                                 Text(
-                                    "e.g. Build upper chest thickness and biceps peak, keep stress off lower back, and optimize for maximal progressive overload.",
+                                    "e.g. Focus on burning stubborn belly fat while maintaining upper chest and bicep size, no heavy spinal loading.",
                                     color = Color(0xFF6A7080),
                                     style = MaterialTheme.typography.bodyMedium
                                 )
@@ -396,7 +566,7 @@ fun OnboardingScreen(
                 }
             }
 
-            // Bottom Navigation Buttons (Back & Next / Generate)
+            // Bottom Buttons
             Column(modifier = Modifier.padding(top = 24.dp)) {
                 if (isLoading) {
                     Box(
@@ -417,7 +587,7 @@ fun OnboardingScreen(
                                 strokeWidth = 3.dp
                             )
                             Text(
-                                text = "GEMINI 4 HYDROGEN SYNTHESIZING PROGRAM...",
+                                text = "GEMINI 4 HYDROGEN SYNTHESIZING BLUEPRINT...",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFFE2F952)
@@ -455,11 +625,17 @@ fun OnboardingScreen(
                                 .clip(RoundedCornerShape(14.dp))
                                 .background(Color(0xFFE2F952))
                                 .clickable {
-                                    if (step < 5) {
+                                    if (step < totalSteps - 1) {
                                         step++
                                     } else {
                                         onComplete(
                                             OnboardingProfile(
+                                                age = ageText.toIntOrNull() ?: 25,
+                                                heightCm = heightCmText.toFloatOrNull() ?: 175f,
+                                                currentWeightKg = weightKgText.toFloatOrNull() ?: 75f,
+                                                goalType = selectedGoal,
+                                                targetWeightKg = targetWeightText.toFloatOrNull(),
+                                                targetFatLossAreas = targetFatLossAreas.toList(),
                                                 jointPainAreas = jointPainAreas.toList(),
                                                 priorityMuscles = priorityMuscles.toList(),
                                                 daysPerWeek = daysPerWeek,
@@ -473,7 +649,7 @@ fun OnboardingScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = if (step < 5) "CONTINUE →" else "⚡ GENERATE HYPERTROPHY PROGRAM",
+                                text = if (step < totalSteps - 1) "CONTINUE →" else "⚡ GENERATE HYPERTROPHY PROGRAM",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF0E0E10)

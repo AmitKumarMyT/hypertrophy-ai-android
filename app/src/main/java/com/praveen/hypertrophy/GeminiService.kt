@@ -556,15 +556,21 @@ object GeminiService {
         val prompt = """
             You are an elite hypertrophy scientist and biomechanist using Gemini 4 Hydrogen.
             Design the optimal foundational day-1 workout session and 7-day progression framework for this lifter:
+            - Age: ${profile.age} years | Height: ${profile.heightCm} cm | Weight: ${profile.currentWeightKg} kg
+            - Primary Objective: ${profile.goalType} ${if (profile.targetWeightKg != null) "| Target Weight: ${profile.targetWeightKg} kg" else ""}
+            - Targeted Fat Loss & Regional Toning Zones: ${profile.targetFatLossAreas.joinToString(", ").ifEmpty { "Balanced Full Body" }}
             - Joint Pain / Injury Shield: ${profile.jointPainAreas.joinToString(", ").ifEmpty { "None" }}
-            - Target Weak Points / Priority: ${profile.priorityMuscles.joinToString(", ").ifEmpty { "Balanced Full Body" }}
+            - Target Weak Points / Priority Muscles: ${profile.priorityMuscles.joinToString(", ").ifEmpty { "Balanced Full Body" }}
             - Training Frequency: ${profile.daysPerWeek} days / week
             - Session Time Budget: ${profile.sessionBudgetMins} minutes
             - Equipment Access: ${profile.equipmentType}
             - Custom Priority Request: "${profile.customPriorityText}"
 
-            Guidelines:
-            - Avoid exercises that exacerbate the lifter's joint pain areas (e.g. if shoulder pain, prefer neutral grip / machine / incline; if lower back, prefer chest-supported / Bulgarian split squats).
+            Biomechanical Guidelines:
+            - If Goal is 'Fat Loss & Lean Toning' or 'Body Recomposition': incorporate metabolic compound movements (e.g. pushups, squats) with strict 3-4s eccentric cadence to maximize lean muscle sparing in a caloric deficit.
+            - If specific Fat Loss/Toning areas are selected (e.g. Belly & Core, Love Handles): ensure dedicated core/abdominal stability exercises (e.g. deadbug, plank, reverse crunch) and compound hinge/squat movements are prioritized.
+            - If Age > 40: reduce axial spinal compression and provide joint-friendly movement variations.
+            - Avoid exercises that exacerbate the lifter's joint pain areas (e.g. if shoulder pain, prefer neutral grip / pushup progression; if lower back, avoid excessive axial shear).
             - Strongly bias sets toward target weak points and custom priority.
             - Choose 3 to 5 optimal exercises from the catalog: curl, conc, bicep, bench, pushup, squat, split_squat, row, latraise, ohip, dip.
             - Assign optimal set count (2 to 4 sets per exercise) fitting within the ${profile.sessionBudgetMins} min session budget.
