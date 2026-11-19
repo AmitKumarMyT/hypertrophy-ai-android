@@ -51,6 +51,7 @@ import com.praveen.hypertrophy.OnboardingProfile
 @Composable
 fun OnboardingScreen(
     isLoading: Boolean,
+    thinkingStatus: String = "",
     initialApiKey: String = "",
     onComplete: (OnboardingProfile, String) -> Unit
 ) {
@@ -728,25 +729,29 @@ fun OnboardingScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(56.dp)
+                            .height(58.dp)
                             .clip(RoundedCornerShape(14.dp))
-                            .background(Color(0xFF1E2024)),
-                        contentAlignment = Alignment.Center
+                            .background(Color(0xFF1E2024))
+                            .border(1.dp, Color(0xFFE2F952).copy(alpha = 0.4f), RoundedCornerShape(14.dp))
+                            .padding(horizontal = 14.dp),
+                        contentAlignment = Alignment.CenterStart
                     ) {
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
+                                modifier = Modifier.size(20.dp),
                                 color = Color(0xFFE2F952),
-                                strokeWidth = 3.dp
+                                strokeWidth = 2.5.dp
                             )
                             Text(
-                                text = "GEMINI 4 HYDROGEN SYNTHESIZING BLUEPRINT...",
+                                text = if (thinkingStatus.isNotBlank()) thinkingStatus else "Thinking: Synthesizing Gemini 4 Hydrogen blueprint...",
                                 style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFFE2F952)
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFFE2F952),
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                             )
                         }
                     }

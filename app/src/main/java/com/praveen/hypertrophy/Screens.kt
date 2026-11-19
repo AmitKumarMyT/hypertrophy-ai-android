@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -94,11 +95,13 @@ fun AppScreen(vm: TrackerVM) {
     val state by vm.state.collectAsState()
     val ui by vm.ui.collectAsState()
     val isGenerating by vm.isGeneratingExercise.collectAsState()
+    val thinkingStatus by vm.aiThinkingStatus.collectAsState()
 
     // First-run / Onboarding check
     if (!state.hasCompletedOnboarding) {
         com.praveen.hypertrophy.ui.OnboardingScreen(
             isLoading = isGenerating,
+            thinkingStatus = thinkingStatus,
             initialApiKey = state.aiSettings.apiKey,
             onComplete = { profile, key ->
                 vm.submitOnboarding(profile, key)
@@ -184,6 +187,36 @@ fun TodayScreen(vm: TrackerVM) {
     var showCatalog by remember { mutableStateOf(false) }
     val dbExercises by vm.dbExercises.collectAsState()
     val isGenerating by vm.isGeneratingExercise.collectAsState()
+    val thinkingStatus by vm.aiThinkingStatus.collectAsState()
+
+    if (thinkingStatus.isNotBlank()) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 2.dp
+                )
+                Text(
+                    text = thinkingStatus,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
 
     if (showSettings) {
         AISettingsDialog(

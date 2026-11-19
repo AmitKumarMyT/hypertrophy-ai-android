@@ -68,6 +68,8 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
     val ui: StateFlow<Ui> = _ui
     private val _isGeneratingExercise = MutableStateFlow(false)
     val isGeneratingExercise: StateFlow<Boolean> = _isGeneratingExercise
+    private val _aiThinkingStatus = MutableStateFlow("")
+    val aiThinkingStatus: StateFlow<String> = _aiThinkingStatus
 
     private var lastWarningSec = -1
 
@@ -261,6 +263,7 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
             // Intra-workout set advice
             if (!finished) {
                 viewModelScope.launch {
+                    _aiThinkingStatus.value = "Thinking: Analyzing stimulus-to-fatigue ratio ($reps reps @ ${dr.rir} RIR)..."
                     val advice = GeminiService.getAdvice(
                         apiKey = st.aiSettings.apiKey,
                         model = st.aiSettings.model,
@@ -272,6 +275,7 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
                         setsDone = cur.done,
                         setsTotal = cur.sets,
                     )
+                    _aiThinkingStatus.value = ""
                     if (advice != null) {
                         commit(_state.value.copy(lastAdvice = advice))
                         // If Gemini recommends adjusted rest time, tune the active rest timer
@@ -286,6 +290,7 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
             // Post-exercise dynamic auto-tuning for next day workout:
             if (exDone) {
                 viewModelScope.launch {
+                    _aiThinkingStatus.value = "Thinking: Auto-tuning tomorrow's plan from ${e.name} fatigue..."
                     val perfSummary = "${cur.sets} sets completed. Final set: $reps reps @ ${dr.rir} RIR with ${if (dr.kg.isNotBlank()) "${dr.kg}kg" else "bodyweight"}."
                     val tuneRes = GeminiService.tuneNextSessionAfterCompletedExercise(
                         apiKey = st.aiSettings.apiKey,
@@ -296,6 +301,7 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
                         performanceSummary = perfSummary,
                         currentTomorrowPlan = ns.session?.plan ?: emptyList()
                     )
+                    _aiThinkingStatus.value = ""
                     if (tuneRes != null) {
                         _ui.update { it.copy(nextDayTuningNotice = "⚡ Auto-tuned next day: ${tuneRes.explanation}") }
                     }
@@ -551,7 +557,7 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
 
     /**
      * Submits the deep biomechanical survey and generates dynamic personalized exercises
-     * with Gemini 4 Hydrogen.
+     * with Gemini 4 Hydrogen, broadcasting real-time Claude Code-style thinking progress.
      */
     fun submitOnboarding(profile: OnboardingProfile, apiKey: String = "") {
         val st = _state.value
@@ -560,6 +566,23 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
 
         viewModelScope.launch {
             _isGeneratingExercise.value = true
+            _aiThinkingStatus.value = "Thinking: Ingesting biometrics & computing metabolic recovery..."
+
+            // Background thinking stage ticker coroutine
+            val tickerJob = launch {
+                val stages = listOf(
+                    "Thinking: Calculating lever arms & ${profile.gender} fatigue resistance...",
+                    "Thinking: Matching high-SFR exercises to gear: \"${profile.equipmentType.take(28)}...\"",
+                    "Thinking: Applying joint shield to avoid strain in ${profile.jointPainAreas.joinToString().ifEmpty { "all joints" }}...",
+                    "Thinking: Synthesizing 3D volumetric mannequin kinematics & eccentric tempos...",
+                    "Thinking: Finalizing progressive overload ladders & day-1 volume..."
+                )
+                for (stage in stages) {
+                    delay(1200)
+                    _aiThinkingStatus.value = stage
+                }
+            }
+
             var dynamicPlan: List<PlanItem>? = null
 
             if (effectiveApiKey.isNotBlank()) {
@@ -577,6 +600,9 @@ class TrackerVM(app: Application) : AndroidViewModel(app) {
                     dynamicPlan = result.planItems
                 }
             }
+
+            tickerJob.cancel()
+            _aiThinkingStatus.value = ""
 
             val targetPlan = dynamicPlan ?: listOf(
                 PlanItem("curl", 3, 0),
