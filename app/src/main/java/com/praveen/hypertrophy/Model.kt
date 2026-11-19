@@ -204,6 +204,7 @@ data class AISettings(
 
 @Serializable
 data class OnboardingProfile(
+    val gender: String = "Male", // "Male", "Female", "Non-Binary / Prefer not to say"
     val age: Int = 25,
     val heightCm: Float = 175f,
     val currentWeightKg: Float = 75f,

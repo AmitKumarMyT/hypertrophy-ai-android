@@ -556,6 +556,7 @@ object GeminiService {
         val prompt = """
             You are an elite hypertrophy scientist and biomechanist using Gemini 4 Hydrogen.
             Design the optimal foundational day-1 workout session and 7-day progression framework for this lifter:
+            - Gender: ${profile.gender}
             - Age: ${profile.age} years | Height: ${profile.heightCm} cm | Weight: ${profile.currentWeightKg} kg
             - Primary Objective: ${profile.goalType} ${if (profile.targetWeightKg != null) "| Target Weight: ${profile.targetWeightKg} kg" else ""}
             - Targeted Fat Loss & Regional Toning Zones: ${profile.targetFatLossAreas.joinToString(", ").ifEmpty { "Balanced Full Body" }}
@@ -563,10 +564,11 @@ object GeminiService {
             - Target Weak Points / Priority Muscles: ${profile.priorityMuscles.joinToString(", ").ifEmpty { "Balanced Full Body" }}
             - Training Frequency: ${profile.daysPerWeek} days / week
             - Session Time Budget: ${profile.sessionBudgetMins} minutes
-            - Equipment Access: ${profile.equipmentType}
+            - Available Equipment: ${profile.equipmentType}
             - Custom Priority Request: "${profile.customPriorityText}"
 
             Biomechanical Guidelines:
+            - Consider sexual dimorphism in muscle recovery, fatigue resistance (females often recover faster intra-set and benefit from higher rep volume; males generally handle higher peak absolute intensity).
             - If Goal is 'Fat Loss & Lean Toning' or 'Body Recomposition': incorporate metabolic compound movements (e.g. pushups, squats) with strict 3-4s eccentric cadence to maximize lean muscle sparing in a caloric deficit.
             - If specific Fat Loss/Toning areas are selected (e.g. Belly & Core, Love Handles): ensure dedicated core/abdominal stability exercises (e.g. deadbug, plank, reverse crunch) and compound hinge/squat movements are prioritized.
             - If Age > 40: reduce axial spinal compression and provide joint-friendly movement variations.

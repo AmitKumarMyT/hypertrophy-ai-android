@@ -57,6 +57,7 @@ fun OnboardingScreen(
     val totalSteps = 7
 
     // Biometrics State
+    var selectedGender by remember { mutableStateOf("Male") }
     var ageText by remember { mutableStateOf("25") }
     var heightCmText by remember { mutableStateOf("175") }
     var weightKgText by remember { mutableStateOf("75") }
@@ -154,6 +155,41 @@ fun OnboardingScreen(
                             color = Color(0xFF8E95A5),
                             modifier = Modifier.padding(vertical = 8.dp)
                         )
+
+                        Spacer(Modifier.height(10.dp))
+
+                        // Gender Selector
+                        Text("Gender (for metabolic & recovery baselines):", style = MaterialTheme.typography.labelMedium, color = Color(0xFFE2F952), fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf("Male", "Female", "Prefer not to say").forEach { g ->
+                                val isSel = selectedGender == g
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (isSel) Color(0xFFE2F952) else Color(0xFF1E2024))
+                                        .border(
+                                            width = 1.dp,
+                                            color = if (isSel) Color(0xFFE2F952) else Color(0xFF2D3139),
+                                            shape = RoundedCornerShape(10.dp)
+                                        )
+                                        .clickable { selectedGender = g },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = g,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSel) Color(0xFF0E0E10) else Color.White
+                                    )
+                                }
+                            }
+                        }
 
                         Spacer(Modifier.height(14.dp))
 
@@ -492,33 +528,113 @@ fun OnboardingScreen(
 
                         Spacer(Modifier.height(14.dp))
 
-                        Text("Available Equipment", style = MaterialTheme.typography.labelMedium, color = Color(0xFF8E95A5))
-                        Spacer(Modifier.height(6.dp))
-                        listOf(
-                            "Full Gym" to "Olympic Barbells, Benches, Power Racks & Cables",
-                            "Home Dumbbells & Bench" to "Hex Dumbbells and Adjustable Bench",
-                            "Minimalist Bodyweight" to "Bodyweight & Pushup/Pullup Bars"
-                        ).forEach { (type, desc) ->
-                            val isSel = equipmentType == type
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(if (isSel) Color(0xFF1E2024) else Color(0xFF141519))
-                                    .border(
-                                        width = if (isSel) 2.dp else 1.dp,
-                                        color = if (isSel) Color(0xFFE2F952) else Color(0xFF22252C),
-                                        shape = RoundedCornerShape(10.dp)
+                        Text("Available Equipment (Text Input)", style = MaterialTheme.typography.labelMedium, color = Color(0xFFE2F952), fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "Type your exact gym or home gear (e.g. 10kg dumbbells, pull-up bar, flat bench) or use quick tags below.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF8E95A5),
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                        Spacer(Modifier.height(4.dp))
+
+                        OutlinedTextField(
+                            value = equipmentType,
+                            onValueChange = { equipmentType = it },
+                            placeholder = { Text("e.g. Pair of 12kg hex dumbbells, pull-up bar, resistance bands, adjustable incline bench", color = Color(0xFF6A7080)) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(90.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color(0xFF141519),
+                                unfocusedContainerColor = Color(0xFF141519),
+                                focusedBorderColor = Color(0xFFE2F952),
+                                unfocusedBorderColor = Color(0xFF22252C),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        // Quick-Add Tag Chips
+                        Text("Quick Add Gear:", style = MaterialTheme.typography.labelSmall, color = Color(0xFF8E95A5))
+                        Spacer(Modifier.height(4.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(
+                                "+ Dumbbells",
+                                "+ Barbell & Plates",
+                                "+ Incline Bench",
+                                "+ Pull-Up Bar",
+                                "+ Resistance Bands",
+                                "+ Power Rack",
+                                "+ Cable Machine",
+                                "+ Bodyweight Only"
+                            ).forEach { tag ->
+                                val cleanTag = tag.removePrefix("+ ")
+                                val isPresent = equipmentType.contains(cleanTag, ignoreCase = true)
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isPresent) Color(0xFFE2F952).copy(alpha = 0.2f) else Color(0xFF1E2024))
+                                        .border(
+                                            width = 1.dp,
+                                            color = if (isPresent) Color(0xFFE2F952) else Color(0xFF2D3139),
+                                            shape = RoundedCornerShape(8.dp)
+                                        )
+                                        .clickable {
+                                            equipmentType = if (equipmentType.isBlank() || equipmentType == "Full Gym") {
+                                                cleanTag
+                                            } else if (!isPresent) {
+                                                "$equipmentType, $cleanTag"
+                                            } else {
+                                                equipmentType
+                                            }
+                                        }
+                                        .padding(horizontal = 9.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = tag,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (isPresent) Color(0xFFE2F952) else Color.White,
+                                        fontWeight = FontWeight.Medium
                                     )
-                                    .clickable { equipmentType = type }
-                                    .padding(12.dp)
-                            ) {
-                                Text(
-                                    text = "$type ($desc)",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (isSel) Color(0xFFE2F952) else Color.White
-                                )
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+
+                        // 1-Tap Complete Setups
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                "Commercial Gym" to "Full Commercial Gym (Barbells, Dumbbells, Benches, Cables, Racks)",
+                                "Home Dumbbells" to "Home Gym: Adjustable Dumbbells, Incline Bench & Pull-Up Bar",
+                                "Bodyweight" to "Bodyweight & Calisthenics: Push-up Station, Floor Mat"
+                            ).forEach { (presetName, presetDesc) ->
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF141519))
+                                        .border(1.dp, Color(0xFF22252C), RoundedCornerShape(8.dp))
+                                        .clickable { equipmentType = presetDesc }
+                                        .padding(vertical = 8.dp, horizontal = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = presetName,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFF38BDF8),
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                             }
                         }
                     }
@@ -630,6 +746,7 @@ fun OnboardingScreen(
                                     } else {
                                         onComplete(
                                             OnboardingProfile(
+                                                gender = selectedGender,
                                                 age = ageText.toIntOrNull() ?: 25,
                                                 heightCm = heightCmText.toFloatOrNull() ?: 175f,
                                                 currentWeightKg = weightKgText.toFloatOrNull() ?: 75f,
